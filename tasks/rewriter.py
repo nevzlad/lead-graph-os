@@ -4,7 +4,6 @@ from celery_app import celery_app
 from database_sync import SessionLocal
 from models import Post, Source
 from services.llm import LLMClient
-from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ def rewrite_post_task(self, post_id: int, tenant_id: str):
         niche = (source.config or {}).get("niche", "news") if source else "news"
 
         client = LLMClient()
-        result = client.rewrite(tenant_id, niche, post.content)
+        result = client.rewrite(tenant_id, niche, post.content or "")
 
         post.content = result["content"]
         post.status = "rewritten" if result["status"] == "success" else "rewritten_fallback"

@@ -1,3 +1,4 @@
+import time
 import requests
 import redis
 import logging
@@ -14,14 +15,19 @@ class LLMClient:
         self.api_url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
     def _check_rate_limit(self, tenant_id: str) -> bool:
+        """Sliding-window limit: RATE_LIMIT_PER_HOUR requests per tenant per hour."""
         key = f"rl:tenant:{tenant_id}"
+        now = time.time()
+        window_start = now - 3600
         pipe = self.redis.pipeline()
-        pipe.incr(key)
-        pipe.expire(key, 3600)
-        current, _ = pipe.execute()
-        if current > settings.RATE_LIMIT_PER_HOUR:
+        pipe.zremrangebyscore(key, 0, window_start)
+        pipe.zcard(key)
+        current, = pipe.execute()[1:]
+        if current >= settings.RATE_LIMIT_PER_HOUR:
             logger.warning(f"Rate limit exceeded for tenant {tenant_id}")
             return False
+        self.redis.zadd(key, {str(time.time_ns()): now})
+        self.redis.expire(key, 3600)
         return True
 
     def _call_api(self, prompt: str) -> Optional[str]:
@@ -50,6 +56,7 @@ class LLMClient:
         return None
 
     def rewrite(self, tenant_id: str, niche: str, raw_text: str) -> Dict[str, str]:
+        raw_text = raw_text or ""
         if not self._check_rate_limit(tenant_id):
             return {
                 "status": "fallback",

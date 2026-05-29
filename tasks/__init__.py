@@ -1,1 +1,1 @@
-# Auto-discover tasks for Celery
+from . import collector, rewriter  # noqa: F401

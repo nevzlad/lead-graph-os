@@ -23,3 +23,5 @@ celery_app.conf.update(
     task_soft_time_limit=300,
     task_time_limit=600
 )
+
+celery_app.autodiscover_tasks(["tasks"])
