@@ -3,7 +3,11 @@ import requests
 import redis
 import logging
 from typing import Optional, Dict
+from sqlalchemy import select
+
 from config import settings
+from database_sync import SessionLocal
+from models import TenantConfig
 from prompts import get_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -14,8 +18,24 @@ class LLMClient:
         self.headers = {"Authorization": f"Bearer {settings.HF_API_KEY}"}
         self.api_url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
+    def _effective_rate_limit(self, tenant_id: str) -> int:
+        limit = settings.RATE_LIMIT_PER_HOUR
+        db = SessionLocal()
+        try:
+            config = db.execute(
+                select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
+            ).scalar_one_or_none()
+            if config:
+                limit += config.api_limit_bonus
+        except Exception as e:
+            logger.warning(f"Could not load api_limit_bonus for {tenant_id}: {e}")
+        finally:
+            db.close()
+        return limit
+
     def _check_rate_limit(self, tenant_id: str) -> bool:
-        """Sliding-window limit: RATE_LIMIT_PER_HOUR requests per tenant per hour."""
+        """Sliding-window limit: effective limit requests per tenant per hour."""
+        effective_limit = self._effective_rate_limit(tenant_id)
         key = f"rl:tenant:{tenant_id}"
         now = time.time()
         window_start = now - 3600
@@ -23,7 +43,7 @@ class LLMClient:
         pipe.zremrangebyscore(key, 0, window_start)
         pipe.zcard(key)
         current, = pipe.execute()[1:]
-        if current >= settings.RATE_LIMIT_PER_HOUR:
+        if current >= effective_limit:
             logger.warning(f"Rate limit exceeded for tenant {tenant_id}")
             return False
         self.redis.zadd(key, {str(time.time_ns()): now})

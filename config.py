@@ -15,6 +15,8 @@ class Settings:
     TG_BOT_TOKEN: str = os.getenv("TG_BOT_TOKEN", "")
     PUBLISHER_JITTER_MIN: int = int(os.getenv("PUBLISHER_JITTER_MIN", "60"))
     PUBLISHER_JITTER_MAX: int = int(os.getenv("PUBLISHER_JITTER_MAX", "300"))
+    ONBOARDING_BOT_TOKEN: str = os.getenv("ONBOARDING_BOT_TOKEN", "") or os.getenv("TG_BOT_TOKEN", "")
+    TRIAL_DAYS: int = int(os.getenv("TRIAL_DAYS", "7"))
 
     if not DATABASE_URL:
         raise EnvironmentError("Переменная окружения DATABASE_URL не установлена")
@@ -22,7 +24,9 @@ class Settings:
         raise EnvironmentError("Переменная окружения HF_API_KEY не установлена")
     if not TG_BOT_TOKEN:
         raise EnvironmentError("Переменная окружения TG_BOT_TOKEN не установлена")
-        
+    if not ONBOARDING_BOT_TOKEN:
+        raise EnvironmentError("Переменная окружения ONBOARDING_BOT_TOKEN не установлена")
+
     if "asyncpg" not in DATABASE_URL:
         if DATABASE_URL.startswith("postgres://"):
             DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
