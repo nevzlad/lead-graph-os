@@ -3,6 +3,8 @@ services:
     name: leadgraph-api
     runtime: docker
     plan: free
+    repo: https://github.com/nevzlad/lead-graph-os
+    branch: main
     dockerfilePath: ./Dockerfile
     dockerCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -29,6 +31,8 @@ services:
     name: leadgraph-worker
     runtime: docker
     plan: free
+    repo: https://github.com/nevzlad/lead-graph-os
+    branch: main
     dockerfilePath: ./Dockerfile
     dockerCommand: celery -A celery_app worker -Q collector,rewriter,publisher,publisher_dlq --loglevel=info -c 2
     envVars:
@@ -49,11 +53,23 @@ services:
         sync: false
       - key: ONBOARDING_BOT_TOKEN
         sync: false
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: leadgraph-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: leadgraph-redis
+          property: connectionString
 
   - type: worker
     name: leadgraph-bot
     runtime: docker
     plan: free
+    repo: https://github.com/nevzlad/lead-graph-os
+    branch: main
     dockerfilePath: ./Dockerfile
     dockerCommand: python -m bot.main
     envVars:

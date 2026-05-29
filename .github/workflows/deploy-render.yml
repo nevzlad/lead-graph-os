@@ -1,0 +1,54 @@
+name: Deploy to Render
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - ".github/workflows/ci.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RENDER_API_KEY != '' }}
+    steps:
+      - name: Trigger deploy for all Lead-Graph services
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -e
+          SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/services?limit=100")
+          echo "$SERVICES" | python3 -c "
+          import json, sys, os, urllib.request
+          data = json.load(sys.stdin)
+          token = os.environ['RENDER_API_KEY']
+          names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
+          for item in data:
+              svc = item.get('service') or item
+              name = svc.get('name', '')
+              if name in names:
+                  sid = svc['id']
+                  req = urllib.request.Request(
+                      f'https://api.render.com/v1/services/{sid}/deploys',
+                      method='POST',
+                      headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+                      data=b'{}',
+                  )
+                  urllib.request.urlopen(req)
+                  print(f'Deploy triggered: {name} ({sid})')
+          "
+
+  deploy-hooks:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RENDER_DEPLOY_HOOK_API != '' }}
+    steps:
+      - name: Deploy API via hook
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_API }}"
+      - name: Deploy worker via hook
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER != '' }}
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}"
+      - name: Deploy bot via hook
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_BOT != '' }}
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_BOT }}"
