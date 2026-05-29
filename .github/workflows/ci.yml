@@ -1,0 +1,81 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest pytest-asyncio httpx
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Run tests
+        env:
+          MODE: commercial
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+          REDIS_URL: redis://localhost:6379/0
+          HF_API_KEY: test_hf_key
+          TG_BOT_TOKEN: test_tg_token
+          ONBOARDING_BOT_TOKEN: test_onboarding_token
+        run: pytest tests/ -v --tb=short
+
+      - name: Verify commercial mode isolation
+        env:
+          MODE: commercial
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+          REDIS_URL: redis://localhost:6379/0
+          HF_API_KEY: test_hf_key
+          TG_BOT_TOKEN: test_tg_token
+          ONBOARDING_BOT_TOKEN: test_onboarding_token
+        run: |
+          python -c "
+          import sys
+          try:
+              from api.bigdata.analyzer import BigDataAnalyzer
+              print('CRITICAL: BigData module imported in commercial mode!')
+              sys.exit(1)
+          except (ImportError, ModuleNotFoundError):
+              print('OK: BigData module correctly blocked in commercial mode')
+              sys.exit(0)
+          "
+
+  build:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t leadgraph-os:${{ github.sha }} .
+
+      - name: Test container health
+        run: |
+          docker run -d --name test-container -p 8000:8000 \
+            -e MODE=commercial \
+            -e DATABASE_URL=postgresql://test:test@localhost:5432/test \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            -e HF_API_KEY=test \
+            -e TG_BOT_TOKEN=test \
+            -e ONBOARDING_BOT_TOKEN=test \
+            leadgraph-os:${{ github.sha }}
+          sleep 65
+          curl -f http://localhost:8000/health || (docker logs test-container && exit 1)
+          docker stop test-container

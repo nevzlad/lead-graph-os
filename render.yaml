@@ -1,0 +1,85 @@
+services:
+  - type: web
+    name: leadgraph-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: MODE
+        value: commercial
+      - key: DATABASE_URL
+        fromDatabase:
+          name: leadgraph-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: leadgraph-redis
+          property: connectionString
+      - key: HF_API_KEY
+        sync: false
+      - key: TG_BOT_TOKEN
+        sync: false
+      - key: ONBOARDING_BOT_TOKEN
+        sync: false
+
+  - type: worker
+    name: leadgraph-worker
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerCommand: celery -A celery_app worker -Q collector,rewriter,publisher,publisher_dlq --loglevel=info -c 2
+    envVars:
+      - key: MODE
+        value: commercial
+      - key: DATABASE_URL
+        fromDatabase:
+          name: leadgraph-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: leadgraph-redis
+          property: connectionString
+      - key: HF_API_KEY
+        sync: false
+      - key: TG_BOT_TOKEN
+        sync: false
+      - key: ONBOARDING_BOT_TOKEN
+        sync: false
+
+  - type: worker
+    name: leadgraph-bot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python -m bot.main
+    envVars:
+      - key: MODE
+        value: commercial
+      - key: DATABASE_URL
+        fromDatabase:
+          name: leadgraph-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: leadgraph-redis
+          property: connectionString
+      - key: ONBOARDING_BOT_TOKEN
+        sync: false
+      - key: TG_BOT_TOKEN
+        sync: false
+
+  - type: redis
+    name: leadgraph-redis
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: leadgraph-db
+    plan: free
+    databaseName: leadgraph
+    user: leadgraph
