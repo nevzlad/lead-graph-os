@@ -31,6 +31,8 @@ class Post(Base):
     content = Column(Text, nullable=True)
     link = Column(String(2048), nullable=True)
     status = Column(String(50), default="raw")  # 'raw', 'rewritten', 'published', etc.
+    external_id = Column(String(64), nullable=True)
+    scheduled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     

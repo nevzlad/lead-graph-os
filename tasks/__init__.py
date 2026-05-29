@@ -1,1 +1,1 @@
-from . import collector, rewriter  # noqa: F401
+from . import collector, publisher, rewriter  # noqa: F401

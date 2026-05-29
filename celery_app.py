@@ -17,6 +17,7 @@ celery_app.conf.update(
         "tasks.collector.*": {"queue": "collector"},
         "tasks.rewriter.*": {"queue": "rewriter"},
         "tasks.publisher.*": {"queue": "publisher"},
+        "tasks.publisher.handle_dlq": {"queue": "publisher_dlq"},
     },
     broker_connection_retry_on_startup=True,
     worker_max_tasks_per_child=500,
