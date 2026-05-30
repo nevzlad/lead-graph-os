@@ -9,6 +9,6 @@ feedparser==6.0.11
 httpx==0.26.0
 requests==2.31.0
 pydantic==2.6.0
-aiogram==3.4.1
+aiogram==3.5.0
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
