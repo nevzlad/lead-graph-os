@@ -15,7 +15,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify or create services, set env vars and deploy
+      - name: Set env vars and deploy leadgraph-api
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           ONBOARDING_BOT_TOKEN: ${{ secrets.ONBOARDING_BOT_TOKEN }}
@@ -30,142 +30,76 @@ jobs:
           SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100")
           echo "$SERVICES" | python3 -c "
-          import json, sys, os, urllib.request, copy
+          import json, sys, os, urllib.request
           data = json.load(sys.stdin)
           token = os.environ['RENDER_API_KEY']
-
-          def find_service(data, name):
-              for item in data:
-                  svc = item.get('service') or item
-                  if svc.get('name', '') == name:
-                      return svc
-              return None
-
-          existing_names = []
+          name = 'leadgraph-api'
+          svc = None
           for item in data:
-              svc = item.get('service') or item
-              existing_names.append(svc.get('name', ''))
-          print(f'Services found: {existing_names}')
+              s = item.get('service') or item
+              if s.get('name', '') == name:
+                  svc = s
+                  break
+          if not svc:
+              print(f'Service {name} not found - skipping')
+              exit(0)
+          sid = svc['id']
+          print(f'Found: {name} ({sid})')
 
-          repo_url = 'https://github.com/nevzlad/lead-graph-os'
-          owner_id = 'tea-d8d11u6q1p3s73dv5mj0'
-
-          SERVICE_DEFS = {
-              'leadgraph-api': {
-                  'type': 'web_service',
-                  'dockerCommand': 'uvicorn api.main:app --host 0.0.0.0 --port \$PORT',
-                  'healthCheckPath': '/health',
-              },
-              'leadgraph-worker': {
-                  'type': 'background_worker',
-                  'dockerCommand': 'celery -A celery_app worker -Q collector,rewriter,publisher,publisher_dlq --loglevel=info -c 2',
-                  'healthCheckPath': None,
-              },
-              'leadgraph-bot': {
-                  'type': 'background_worker',
-                  'dockerCommand': 'python -m bot.main',
-                  'healthCheckPath': None,
-              },
-          }
-
-          for name, svc_def in SERVICE_DEFS.items():
-              existing = find_service(data, name)
-              if existing:
-                  sid = existing['id']
-                  print(f'Service exists: {name} ({sid})')
-              else:
-                  print(f'Service missing, creating: {name}')
-                  create_body = {
-                      'type': svc_def['type'],
-                      'name': name,
-                      'repo': repo_url,
-                      'branch': 'main',
-                      'autoDeploy': 'yes',
-                      'ownerId': owner_id,
-                      'serviceDetails': {
-                          'env': 'docker',
-                          'envSpecificDetails': {
-                              'dockerCommand': svc_def['dockerCommand'],
-                              'dockerContext': '.',
-                              'dockerfilePath': './Dockerfile',
-                          },
-                      },
-                  }
-                  if svc_def.get('healthCheckPath'):
-                      create_body['serviceDetails']['healthCheckPath'] = svc_def['healthCheckPath']
-                  create_req = urllib.request.Request(
-                      'https://api.render.com/v1/services',
-                      data=json.dumps(create_body).encode(),
-                      method='POST',
-                      headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
-                  )
-                  try:
-                      create_resp_raw = urllib.request.urlopen(create_req).read().decode()
-                      create_resp = json.loads(create_resp_raw)
-                      created_svc = create_resp.get('service', create_resp)
-                      sid = created_svc['id']
-                      print(f'Service created: {name} ({sid})')
-                  except urllib.error.HTTPError as e:
-                      error_body = e.read().decode()
-                      print(f'Error creating {name}: {e.code} {error_body}')
-                      continue
-
-              cur_req = urllib.request.Request(
+          cur_req = urllib.request.Request(
+              f'https://api.render.com/v1/services/{sid}/env-vars',
+              headers={'Authorization': f'Bearer {token}'},
+          )
+          cur = json.loads(urllib.request.urlopen(cur_req).read())
+          env_map = {}
+          for ev in cur:
+              env_var = ev.get('envVar') or ev
+              key = env_var.get('key', '')
+              if not key:
+                  continue
+              if 'generateValue' in ev or 'generateValue' in env_var:
+                  continue
+              val = ev.get('value') or env_var.get('value', '')
+              if val:
+                  env_map[key] = val
+          for env_key in ('HF_API_KEY', 'TG_BOT_TOKEN', 'ONBOARDING_BOT_TOKEN'):
+              val = os.environ.get(env_key, '')
+              if val:
+                  env_map[env_key] = val
+          db_url = os.environ.get('DATABASE_URL', '')
+          if db_url:
+              env_map['DATABASE_URL'] = db_url
+          if env_map:
+              env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
+              body = json.dumps(env_payload).encode()
+              req = urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/env-vars',
-                  headers={'Authorization': f'Bearer {token}'},
+                  data=body,
+                  method='PUT',
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Content-Type': 'application/json',
+                  },
               )
-              cur = json.loads(urllib.request.urlopen(cur_req).read())
-              env_map = {}
-              for ev in cur:
-                  env_var = ev.get('envVar') or ev
-                  key = env_var.get('key', '')
-                  if not key:
-                      continue
-                  if 'generateValue' in ev or 'generateValue' in env_var:
-                      continue
-                  val = ev.get('value') or env_var.get('value', '')
-                  if val:
-                      env_map[key] = val
-              for env_key in ('HF_API_KEY', 'TG_BOT_TOKEN', 'ONBOARDING_BOT_TOKEN'):
-                  val = os.environ.get(env_key, '')
-                  if val:
-                      env_map[env_key] = val
-              db_url = os.environ.get('DATABASE_URL', '')
-              if db_url:
-                  env_map['DATABASE_URL'] = db_url
-              if env_map:
-                  env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
-                  body = json.dumps(env_payload).encode()
-                  req = urllib.request.Request(
-                      f'https://api.render.com/v1/services/{sid}/env-vars',
-                      data=body,
-                      method='PUT',
-                      headers={
-                          'Authorization': f'Bearer {token}',
-                          'Content-Type': 'application/json',
-                      },
-                  )
-                  urllib.request.urlopen(req)
-                  print(f'Env vars set: {name} ({sid}) - {len(env_map)} vars: {list(env_map.keys())}')
-              else:
-                  print(f'No env vars to set for {name}')
-              deploy_req = urllib.request.Request(
-                  f'https://api.render.com/v1/services/{sid}/deploys',
-                  method='POST',
-                  headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
-                  data=b'{}',
-              )
-              deploy_resp_raw = urllib.request.urlopen(deploy_req).read().decode()
-              if deploy_resp_raw:
-                  deploy_resp = json.loads(deploy_resp_raw)
-                  deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
-                  print(f'Deploy triggered: {name} ({sid}) - deploy ID: {deploy_id}')
-              else:
-                  print(f'Deploy triggered: {name} ({sid}) - no response body')
+              urllib.request.urlopen(req)
+              print(f'Env vars set: {len(env_map)} vars')
+          deploy_req = urllib.request.Request(
+              f'https://api.render.com/v1/services/{sid}/deploys',
+              method='POST',
+              headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+              data=b'{}',
+          )
+          deploy_resp_raw = urllib.request.urlopen(deploy_req).read().decode()
+          if deploy_resp_raw:
+              deploy_resp = json.loads(deploy_resp_raw)
+              deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
+              print(f'Deploy triggered: {deploy_id}')
+          else:
+              print(f'Deploy triggered - no response body')
           "
-      - name: Wait for deploys and check status
+      - name: Wait for deploy and check status
         run: |
-          echo "Waiting 120s for deploys..."
+          echo "Waiting 120s for deploy..."
           sleep 120
           SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100")
@@ -173,16 +107,9 @@ jobs:
           import json, sys, os, urllib.request
           data = json.load(sys.stdin)
           token = os.environ['RENDER_API_KEY']
-          names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
-          all_names = []
           for item in data:
               svc = item.get('service') or item
-              all_names.append(svc.get('name', ''))
-          print(f'Wait: services found: {all_names}')
-          for item in data:
-              svc = item.get('service') or item
-              name = svc.get('name', '')
-              if name not in names:
+              if svc.get('name', '') != 'leadgraph-api':
                   continue
               sid = svc['id']
               deploys_req = urllib.request.Request(
@@ -195,10 +122,11 @@ jobs:
                   dep_id = dep.get('id', '?')
                   status = dep.get('status', '?')
                   finished_at = dep.get('finishedAt', '')
-                  print(f'{name}: deploy {dep_id} - {status} (finished: {finished_at})')
+                  print(f'leadgraph-api: deploy {dep_id} - {status} (finished: {finished_at})')
               else:
-                  print(f'{name}: no deploys')
+                  print(f'leadgraph-api: no deploys')
           "
+
 
   deploy-hooks:
     runs-on: ubuntu-latest
@@ -209,24 +137,6 @@ jobs:
         run: |
           if [ -z "$URL" ]; then
             echo "Skipping: RENDER_DEPLOY_HOOK_API not set"
-            exit 0
-          fi
-          curl -fsS -X POST "$URL"
-      - name: Deploy worker via hook
-        env:
-          URL: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}
-        run: |
-          if [ -z "$URL" ]; then
-            echo "Skipping: RENDER_DEPLOY_HOOK_WORKER not set"
-            exit 0
-          fi
-          curl -fsS -X POST "$URL"
-      - name: Deploy bot via hook
-        env:
-          URL: ${{ secrets.RENDER_DEPLOY_HOOK_BOT }}
-        run: |
-          if [ -z "$URL" ]; then
-            echo "Skipping: RENDER_DEPLOY_HOOK_BOT not set"
             exit 0
           fi
           curl -fsS -X POST "$URL"
