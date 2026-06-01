@@ -15,7 +15,13 @@ logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
-        self.redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        self._redis = None
+        try:
+            self._redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            self._redis.ping()
+        except Exception as e:
+            logger.warning(f"Redis unavailable, rate limiting skipped: {e}")
+            self._redis = None
         self.headers = {"Authorization": f"Bearer {settings.HF_API_KEY}"}
         self.api_url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
@@ -36,19 +42,21 @@ class LLMClient:
 
     def _check_rate_limit(self, tenant_id: str) -> bool:
         """Sliding-window limit: effective limit requests per tenant per hour."""
+        if self._redis is None:
+            return True
         effective_limit = self._effective_rate_limit(tenant_id)
         key = f"rl:tenant:{tenant_id}"
         now = time.time()
         window_start = now - 3600
-        pipe = self.redis.pipeline()
+        pipe = self._redis.pipeline()
         pipe.zremrangebyscore(key, 0, window_start)
         pipe.zcard(key)
         current, = pipe.execute()[1:]
         if current >= effective_limit:
             logger.warning(f"Rate limit exceeded for tenant {tenant_id}")
             return False
-        self.redis.zadd(key, {str(time.time_ns()): now})
-        self.redis.expire(key, 3600)
+        self._redis.zadd(key, {str(time.time_ns()): now})
+        self._redis.expire(key, 3600)
         return True
 
     def _call_api(self, prompt: str) -> Optional[str]:

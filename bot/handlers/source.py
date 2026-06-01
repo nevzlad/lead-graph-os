@@ -48,7 +48,7 @@ async def _get_sources(tenant_id: str) -> list[Source]:
                 Source.tenant_id == tenant_id,
             ).order_by(Source.id)
         )
-        return list(result.scalars().all())
+        return result.scalars().all()
 
 
 @router.message(Command("source"))
