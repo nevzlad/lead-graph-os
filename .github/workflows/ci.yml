@@ -60,6 +60,20 @@ jobs:
     needs: lint-and-test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -68,7 +82,7 @@ jobs:
 
       - name: Test container health
         run: |
-          docker run -d --name test-container -p 8000:8000 \
+          docker run -d --name test-container --network host \
             -e MODE=commercial \
             -e DATABASE_URL=postgresql://test:test@localhost:5432/test \
             -e REDIS_URL=redis://localhost:6379/0 \
@@ -76,6 +90,6 @@ jobs:
             -e TG_BOT_TOKEN=test \
             -e ONBOARDING_BOT_TOKEN=test \
             leadgraph-os:${{ github.sha }}
-          sleep 65
+          sleep 30
           curl -f http://localhost:8000/health || (docker logs test-container && exit 1)
           docker stop test-container
