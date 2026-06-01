@@ -57,12 +57,12 @@ jobs:
                   'healthCheckPath': '/health',
               },
               'leadgraph-worker': {
-                  'type': 'worker',
+                  'type': 'background_worker',
                   'dockerCommand': 'celery -A celery_app worker -Q collector,rewriter,publisher,publisher_dlq --loglevel=info -c 2',
                   'healthCheckPath': None,
               },
               'leadgraph-bot': {
-                  'type': 'worker',
+                  'type': 'background_worker',
                   'dockerCommand': 'python -m bot.main',
                   'healthCheckPath': None,
               },
