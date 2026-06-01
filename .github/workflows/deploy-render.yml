@@ -33,12 +33,18 @@ jobs:
           data = json.load(sys.stdin)
           token = os.environ['RENDER_API_KEY']
           names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
+          all_names = []
+          for item in data:
+              svc = item.get('service') or item
+              all_names.append(svc.get('name', ''))
+          print(f'Services found: {all_names}')
           for item in data:
               svc = item.get('service') or item
               name = svc.get('name', '')
               if name not in names:
                   continue
               sid = svc['id']
+              print(f'Processing: {name} ({sid})')
               cur_req = urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/env-vars',
                   headers={'Authorization': f'Bearer {token}'},
@@ -61,22 +67,22 @@ jobs:
                   val = os.environ.get(env_key, '')
                   if val:
                       env_map[env_key] = val
-              if not env_map:
+              if env_map:
+                  env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
+                  body = json.dumps(env_payload).encode()
+                  req = urllib.request.Request(
+                      f'https://api.render.com/v1/services/{sid}/env-vars',
+                      data=body,
+                      method='PUT',
+                      headers={
+                          'Authorization': f'Bearer {token}',
+                          'Content-Type': 'application/json',
+                      },
+                  )
+                  urllib.request.urlopen(req)
+                  print(f'Env vars set: {name} ({sid}) - {len(env_map)} vars: {list(env_map.keys())}')
+              else:
                   print(f'No env vars to set for {name}')
-                  continue
-              env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
-              body = json.dumps(env_payload).encode()
-              req = urllib.request.Request(
-                  f'https://api.render.com/v1/services/{sid}/env-vars',
-                  data=body,
-                  method='PUT',
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Content-Type': 'application/json',
-                  },
-              )
-              urllib.request.urlopen(req)
-              print(f'Env vars set: {name} ({sid}) - {len(env_map)} vars: {list(env_map.keys())}')
               deploy_req = urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/deploys',
                   method='POST',
@@ -102,6 +108,11 @@ jobs:
           data = json.load(sys.stdin)
           token = os.environ['RENDER_API_KEY']
           names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
+          all_names = []
+          for item in data:
+              svc = item.get('service') or item
+              all_names.append(svc.get('name', ''))
+          print(f'Wait: services found: {all_names}')
           for item in data:
               svc = item.get('service') or item
               name = svc.get('name', '')
