@@ -30,7 +30,7 @@ jobs:
           [ -z "$ONBOARDING_BOT_TOKEN" ] && missing="$missing ONBOARDING_BOT_TOKEN"
           [ -z "$HF_API_KEY" ] && missing="$missing HF_API_KEY"
           if [ -n "$missing" ]; then
-            echo "Warning: missing secrets:$missing — will skip env var update if not already set on Render"
+            echo "Warning: missing secrets:$missing"
           fi
 
       - name: Set env vars on Render services
@@ -43,53 +43,45 @@ jobs:
           SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100")
           echo "$SERVICES" | python3 -c "
-import json, sys, os, urllib.request
-
-data = json.load(sys.stdin)
-token = os.environ['RENDER_API_KEY']
-names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
-
-for item in data:
-    svc = item.get('service') or item
-    name = svc.get('name', '')
-    if name not in names:
-        continue
-    sid = svc['id']
-
-    # Get current env vars (to preserve generated ones like DATABASE_URL)
-    cur_req = urllib.request.Request(
-        f'https://api.render.com/v1/services/{sid}/env-vars',
-        headers={'Authorization': f'Bearer {token}'},
-    )
-    cur = json.loads(urllib.request.urlopen(cur_req).read())
-    env_map = {}
-    for ev in cur:
-        k = ev.get('key') or ev.get('envVar', {}).get('key', '')
-        v = ev.get('value') or ev.get('envVar', {}).get('value', '')
-        if k:
-            env_map[k] = v
-
-    # Update with our secrets
-    for env_key in ('HF_API_KEY', 'TG_BOT_TOKEN', 'ONBOARDING_BOT_TOKEN'):
-        val = os.environ.get(env_key, '')
-        if val:
-            env_map[env_key] = val
-
-    # Build payload: array of {key, value}
-    env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
-    body = json.dumps(env_payload).encode()
-    req = urllib.request.Request(
-        f'https://api.render.com/v1/services/{sid}/env-vars',
-        data=body,
-        method='PUT',
-        headers={
-            'Authorization': f'Bearer {token}',
-            'Content-Type': 'application/json',
-        },
-    )
-    urllib.request.urlopen(req)
-    print(f'Env vars updated: {name} ({sid}) — {len(env_map)} vars')
-"
+          import json, sys, os, urllib.request
+          data = json.load(sys.stdin)
+          token = os.environ['RENDER_API_KEY']
+          names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
+          for item in data:
+              svc = item.get('service') or item
+              name = svc.get('name', '')
+              if name not in names:
+                  continue
+              sid = svc['id']
+              cur_req = urllib.request.Request(
+                  f'https://api.render.com/v1/services/{sid}/env-vars',
+                  headers={'Authorization': f'Bearer {token}'},
+              )
+              cur = json.loads(urllib.request.urlopen(cur_req).read())
+              env_map = {}
+              for ev in cur:
+                  k = ev.get('key') or ev.get('envVar', {}).get('key', '')
+                  v = ev.get('value') or ev.get('envVar', {}).get('value', '')
+                  if k:
+                      env_map[k] = v
+              for env_key in ('HF_API_KEY', 'TG_BOT_TOKEN', 'ONBOARDING_BOT_TOKEN'):
+                  val = os.environ.get(env_key, '')
+                  if val:
+                      env_map[env_key] = val
+              env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
+              body = json.dumps(env_payload).encode()
+              req = urllib.request.Request(
+                  f'https://api.render.com/v1/services/{sid}/env-vars',
+                  data=body,
+                  method='PUT',
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Content-Type': 'application/json',
+                  },
+              )
+              urllib.request.urlopen(req)
+              print(f'Env vars updated: {name} ({sid})')
+          "
 
       - name: Trigger deploy for all Lead-Graph services
         run: |
