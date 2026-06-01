@@ -26,6 +26,11 @@ async def main() -> None:
 
     @dp.startup()
     async def on_startup() -> None:
+        from models import Base
+        from utils.db import engine
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
         logger.info("Onboarding bot started.")
 
     @dp.shutdown()
