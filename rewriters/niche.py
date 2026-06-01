@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from .base import BaseRewriter
 from .presets import NICHE_PRESETS
 

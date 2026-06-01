@@ -1,8 +1,9 @@
-import time
-import requests
-import redis
 import logging
-from typing import Optional, Dict
+import time
+from typing import Dict, Optional
+
+import redis
+import requests
 from sqlalchemy import select
 
 from config import settings

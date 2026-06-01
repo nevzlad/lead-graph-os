@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from config import settings
 
 _sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")

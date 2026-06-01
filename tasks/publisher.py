@@ -1,14 +1,14 @@
-import random
 import logging
+import random
 from datetime import datetime, timezone
 
 from celery.exceptions import Retry
 
 from celery_app import celery_app
+from config import settings
 from database_sync import SessionLocal
 from models import Post, Source
 from services.telegram import send_message
-from config import settings
 
 logger = logging.getLogger(__name__)
 

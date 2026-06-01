@@ -1,10 +1,10 @@
 import logging
 from datetime import datetime, timezone
+
 from celery_app import celery_app
-from database_sync import SessionLocal
-from models import Source, Post
 from collectors.rss import RSSCollector
-from config import settings
+from database_sync import SessionLocal
+from models import Post, Source
 
 logger = logging.getLogger(__name__)
 
