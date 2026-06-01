@@ -84,6 +84,8 @@ services:
           type: redis
           name: leadgraph-redis
           property: connectionString
+      - key: HF_API_KEY
+        sync: false
       - key: ONBOARDING_BOT_TOKEN
         sync: false
       - key: TG_BOT_TOKEN
