@@ -10,6 +10,10 @@ if "sslmode=require" in _db_url:
     _db_url = _db_url.replace("?sslmode=require", "").replace("&sslmode=require", "")
     _connect_args["ssl"] = "require"
 
+_engine_kwargs = {}
+if _connect_args:
+    _engine_kwargs["connect_args"] = _connect_args
+
 engine = create_async_engine(
     _db_url,
     echo=False,
@@ -17,7 +21,7 @@ engine = create_async_engine(
     max_overflow=0,
     pool_pre_ping=True,
     pool_recycle=300,
-    connect_args=_connect_args if _connect_args else None,
+    **_engine_kwargs,
 )
 
 async_session_factory = async_sessionmaker(
