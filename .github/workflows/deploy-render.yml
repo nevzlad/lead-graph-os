@@ -20,6 +20,7 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           ONBOARDING_BOT_TOKEN: ${{ secrets.ONBOARDING_BOT_TOKEN }}
           HF_API_KEY: ${{ secrets.HF_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           if [ -z "$RENDER_API_KEY" ]; then
             echo "Skipping: RENDER_API_KEY not set"
@@ -72,6 +73,9 @@ jobs:
                   val = os.environ.get(env_key, '')
                   if val:
                       env_map[env_key] = val
+              db_url = os.environ.get('DATABASE_URL', '')
+              if db_url:
+                  env_map['DATABASE_URL'] = db_url
               if env_map:
                   env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
                   body = json.dumps(env_payload).encode()
