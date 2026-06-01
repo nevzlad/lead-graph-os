@@ -140,3 +140,17 @@ jobs:
             exit 0
           fi
           curl -fsS -X POST "$URL"
+
+  verify-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check bot status via API debug endpoint
+        run: |
+          sleep 30
+          DEBUG=$(curl -sS -f --max-time 30 "https://leadgraph-api.onrender.com/debug" || echo '{"bot_running":false}')
+          if echo "$DEBUG" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('bot_running') else 1)"; then
+            echo "Bot is running!"
+          else
+            echo "Bot is NOT running!"
+            exit 1
+          fi
