@@ -4,13 +4,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config import settings
 
+_db_url = settings.DATABASE_URL
+_connect_args = {}
+if "sslmode=require" in _db_url:
+    _db_url = _db_url.replace("?sslmode=require", "").replace("&sslmode=require", "")
+    _connect_args["ssl"] = "require"
+
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    _db_url,
     echo=False,
     pool_size=5,
     max_overflow=0,
     pool_pre_ping=True,
     pool_recycle=300,
+    connect_args=_connect_args if _connect_args else None,
 )
 
 async_session_factory = async_sessionmaker(
