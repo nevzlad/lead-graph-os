@@ -11,7 +11,7 @@ RENDER_API_KEY не задан.
   1. Откройте https://dashboard.render.com/blueprint/new
   2. Подключите репозиторий: nevzlad/lead-graph-os (ветка main)
   3. Укажите Blueprint Path: render.yaml
-  4. Задайте секреты: HF_API_KEY, TG_BOT_TOKEN, ONBOARDING_BOT_TOKEN
+   4. Задайте секреты (для всех трёх сервисов): HF_API_KEY, TG_BOT_TOKEN, ONBOARDING_BOT_TOKEN
   5. Нажмите Deploy Blueprint
 
 Повторный деплой через API:
