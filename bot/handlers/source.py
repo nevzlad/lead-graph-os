@@ -53,17 +53,21 @@ async def _get_sources(tenant_id: str) -> list[Source]:
 
 @router.message(Command("source"))
 async def cmd_source(message: Message):
-    tenant = await _get_tenant(str(message.from_user.id))
-    if not tenant:
-        await message.answer("Сначала пройди онбординг: /setup")
-        return
+    try:
+        tenant = await _get_tenant(str(message.from_user.id))
+        if not tenant:
+            await message.answer("Сначала пройди онбординг: /setup")
+            return
 
-    sources = await _get_sources(tenant.tenant_id)
-    if not sources:
-        txt = "Нет добавленных источников.\nНажми «Добавить источник», чтобы добавить RSS-ленту."
-    else:
-        txt = f"У тебя {len(sources)} источник(ов):"
-    await message.answer(txt, reply_markup=_sources_keyboard(sources))
+        sources = await _get_sources(tenant.tenant_id)
+        if not sources:
+            txt = "Нет добавленных источников.\nНажми «Добавить источник», чтобы добавить RSS-ленту."
+        else:
+            txt = f"У тебя {len(sources)} источник(ов):"
+        await message.answer(txt, reply_markup=_sources_keyboard(sources))
+    except Exception as e:
+        logger.error("cmd_source error: %s", e, exc_info=True)
+        await message.answer(f"❌ Ошибка: {e}")
 
 
 @router.callback_query(F.data == "src:add")
