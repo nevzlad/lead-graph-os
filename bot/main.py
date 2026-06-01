@@ -11,26 +11,27 @@ from config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=settings.ONBOARDING_BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
-
-dp.update.outer_middleware(TelemetryMiddleware())
-dp.include_router(setup.router)
-dp.include_router(template.router)
-dp.include_router(billing.router)
-
-
-@dp.startup()
-async def on_startup() -> None:
-    logger.info("Onboarding bot started.")
-
-
-@dp.shutdown()
-async def on_shutdown() -> None:
-    await bot.session.close()
+bot: Bot | None = None
+dp: Dispatcher | None = None
 
 
 async def main() -> None:
+    global bot, dp
+    bot = Bot(token=settings.ONBOARDING_BOT_TOKEN)
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.update.outer_middleware(TelemetryMiddleware())
+    dp.include_router(setup.router)
+    dp.include_router(template.router)
+    dp.include_router(billing.router)
+
+    @dp.startup()
+    async def on_startup() -> None:
+        logger.info("Onboarding bot started.")
+
+    @dp.shutdown()
+    async def on_shutdown() -> None:
+        await bot.session.close()
+
     await dp.start_polling(bot)
 
 
