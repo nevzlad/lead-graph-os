@@ -52,7 +52,14 @@ jobs:
               )
               svc_detail = json.loads(urllib.request.urlopen(svc_detail_req).read())
               service_obj = svc_detail.get('service', svc_detail)
-              print(f'Service type: {service_obj.get(\"type\")}, autoDeploy: {service_obj.get(\"autoDeploy\")}')
+              print(f'Service type: {service_obj.get("type")}, autoDeploy: {service_obj.get("autoDeploy")}')
+              # Check if service has Blueprint info
+              suspenders = service_obj.get('suspended', 'not_found')
+              service_details = service_obj.get('serviceDetails', {})
+              print(f'Suspended: {suspenders}, has serviceDetails: {bool(service_details)}')
+              blueprint_id = service_obj.get('blueprintId') or service_details.get('blueprintId', '')
+              repo_info = service_obj.get('repo', '') or service_details.get('repo', '')
+              print(f'BlueprintId: {blueprint_id}, Repo: {repo_info}')
               cur_req = urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/env-vars',
                   headers={'Authorization': f'Bearer {token}'},
