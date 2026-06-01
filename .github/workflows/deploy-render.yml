@@ -11,12 +11,15 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ secrets.RENDER_API_KEY != '' }}
     steps:
       - name: Trigger deploy for all Lead-Graph services
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "Skipping: RENDER_API_KEY not set in GitHub secrets"
+            exit 0
+          fi
           set -e
           SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100")
@@ -42,13 +45,31 @@ jobs:
 
   deploy-hooks:
     runs-on: ubuntu-latest
-    if: ${{ secrets.RENDER_DEPLOY_HOOK_API != '' }}
     steps:
       - name: Deploy API via hook
-        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_API }}"
+        env:
+          URL: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "Skipping: RENDER_DEPLOY_HOOK_API not set"
+            exit 0
+          fi
+          curl -fsS -X POST "$URL"
       - name: Deploy worker via hook
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER != '' }}
-        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}"
+        env:
+          URL: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "Skipping: RENDER_DEPLOY_HOOK_WORKER not set"
+            exit 0
+          fi
+          curl -fsS -X POST "$URL"
       - name: Deploy bot via hook
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_BOT != '' }}
-        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_BOT }}"
+        env:
+          URL: ${{ secrets.RENDER_DEPLOY_HOOK_BOT }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "Skipping: RENDER_DEPLOY_HOOK_BOT not set"
+            exit 0
+          fi
+          curl -fsS -X POST "$URL"
