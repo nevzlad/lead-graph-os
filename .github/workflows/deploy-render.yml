@@ -78,12 +78,12 @@ jobs:
                   create_body = {
                       'type': svc_def['type'],
                       'name': name,
-                      'env': 'docker',
                       'repo': repo_url,
                       'branch': 'main',
                       'autoDeploy': 'yes',
                       'ownerId': owner_id,
                       'serviceDetails': {
+                          'env': 'docker',
                           'envSpecificDetails': {
                               'dockerCommand': svc_def['dockerCommand'],
                               'dockerContext': '.',
