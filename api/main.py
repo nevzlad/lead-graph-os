@@ -54,26 +54,29 @@ async def debug_tenants():
     from models import TenantConfig
     from utils.db import async_session_factory
 
-    async with async_session_factory() as session:
-        cnt = await session.scalar(select(func.count(TenantConfig.tenant_id)))
-        rows = await session.execute(
-            select(
-                TenantConfig.tenant_id,
-                TenantConfig.tg_user_id,
-                TenantConfig.niche,
-                TenantConfig.created_at,
-            ).limit(20)
-        )
-        tenants = [
-            {
-                "tenant_id": row[0],
-                "tg_user_id": row[1],
-                "niche": row[2],
-                "created_at": str(row[3]) if row[3] else None,
-            }
-            for row in rows
-        ]
-    return {"count": cnt or 0, "tenants": tenants}
+    try:
+        async with async_session_factory() as session:
+            cnt = await session.scalar(select(func.count(TenantConfig.tenant_id)))
+            rows = await session.execute(
+                select(
+                    TenantConfig.tenant_id,
+                    TenantConfig.tg_user_id,
+                    TenantConfig.niche,
+                    TenantConfig.created_at,
+                ).limit(20)
+            )
+            tenants = [
+                {
+                    "tenant_id": row[0],
+                    "tg_user_id": row[1],
+                    "niche": row[2],
+                    "created_at": str(row[3]) if row[3] else None,
+                }
+                for row in rows
+            ]
+        return {"count": cnt or 0, "tenants": tenants}
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
 
 
 app.include_router(public.router)
