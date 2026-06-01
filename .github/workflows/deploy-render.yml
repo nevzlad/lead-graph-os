@@ -25,121 +25,97 @@ jobs:
             echo "Skipping: RENDER_API_KEY not set"
             exit 0
           fi
-
           set -e
-
-          # Get all services
           SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100")
-
           echo "$SERVICES" | python3 -c "
-import json, sys, os, urllib.request
-
-data = json.load(sys.stdin)
-token = os.environ['RENDER_API_KEY']
-names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
-
-for item in data:
-    svc = item.get('service') or item
-    name = svc.get('name', '')
-    if name not in names:
-        continue
-    sid = svc['id']
-
-    # Get current non-generated env vars, then update secrets
-    cur_req = urllib.request.Request(
-        f'https://api.render.com/v1/services/{sid}/env-vars',
-        headers={'Authorization': f'Bearer {token}'},
-    )
-    cur = json.loads(urllib.request.urlopen(cur_req).read())
-
-    # Build a map of user-set env vars only (skip generated/empty ones)
-    env_map = {}
-    for ev in cur:
-        env_var = ev.get('envVar') or ev
-        key = env_var.get('key', '')
-        if not key:
-            continue
-        # Skip generated env vars (they have generateValue)
-        if 'generateValue' in ev or 'generateValue' in env_var:
-            continue
-        val = ev.get('value') or env_var.get('value', '')
-        if val:
-            env_map[key] = val
-
-    # Override with our secrets
-    for env_key in ('HF_API_KEY', 'TG_BOT_TOKEN', 'ONBOARDING_BOT_TOKEN'):
-        val = os.environ.get(env_key, '')
-        if val:
-            env_map[env_key] = val
-
-    # PUT only user env vars (generated ones like DATABASE_URL are NOT included)
-    if not env_map:
-        print(f'No env vars to set for {name}')
-    else:
-        env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
-        body = json.dumps(env_payload).encode()
-        req = urllib.request.Request(
-            f'https://api.render.com/v1/services/{sid}/env-vars',
-            data=body,
-            method='PUT',
-            headers={
-                'Authorization': f'Bearer {token}',
-                'Content-Type': 'application/json',
-            },
-        )
-        urllib.request.urlopen(req)
-        print(f'Env vars set: {name} ({sid}) — {len(env_map)} vars: {list(env_map.keys())}')
-
-    # Trigger deploy
-    deploy_req = urllib.request.Request(
-        f'https://api.render.com/v1/services/{sid}/deploys',
-        method='POST',
-        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
-        data=b'{}',
-    )
-    deploy_resp = json.loads(urllib.request.urlopen(deploy_req).read())
-    deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
-    print(f'Deploy triggered: {name} ({sid}) — deploy ID: {deploy_id}')
-"
-
-      - name: Wait for deploys
+          import json, sys, os, urllib.request
+          data = json.load(sys.stdin)
+          token = os.environ['RENDER_API_KEY']
+          names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
+          for item in data:
+              svc = item.get('service') or item
+              name = svc.get('name', '')
+              if name not in names:
+                  continue
+              sid = svc['id']
+              cur_req = urllib.request.Request(
+                  f'https://api.render.com/v1/services/{sid}/env-vars',
+                  headers={'Authorization': f'Bearer {token}'},
+              )
+              cur = json.loads(urllib.request.urlopen(cur_req).read())
+              env_map = {}
+              for ev in cur:
+                  env_var = ev.get('envVar') or ev
+                  key = env_var.get('key', '')
+                  if not key:
+                      continue
+                  if 'generateValue' in ev or 'generateValue' in env_var:
+                      continue
+                  val = ev.get('value') or env_var.get('value', '')
+                  if val:
+                      env_map[key] = val
+              for env_key in ('HF_API_KEY', 'TG_BOT_TOKEN', 'ONBOARDING_BOT_TOKEN'):
+                  val = os.environ.get(env_key, '')
+                  if val:
+                      env_map[env_key] = val
+              if not env_map:
+                  print(f'No env vars to set for {name}')
+                  continue
+              env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
+              body = json.dumps(env_payload).encode()
+              req = urllib.request.Request(
+                  f'https://api.render.com/v1/services/{sid}/env-vars',
+                  data=body,
+                  method='PUT',
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Content-Type': 'application/json',
+                  },
+              )
+              urllib.request.urlopen(req)
+              print(f'Env vars set: {name} ({sid}) - {len(env_map)} vars: {list(env_map.keys())}')
+              deploy_req = urllib.request.Request(
+                  f'https://api.render.com/v1/services/{sid}/deploys',
+                  method='POST',
+                  headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+                  data=b'{}',
+              )
+              deploy_resp = json.loads(urllib.request.urlopen(deploy_req).read())
+              deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
+              print(f'Deploy triggered: {name} ({sid}) - deploy ID: {deploy_id}')
+          "
+      - name: Wait for deploys and check status
         run: |
-          set -e
-          echo "Waiting 120 seconds for deploys to progress..."
+          echo "Waiting 120s for deploys..."
           sleep 120
-          echo "Checking deploy status..."
           SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100")
           echo "$SERVICES" | python3 -c "
-import json, sys, os, urllib.request
-
-data = json.load(sys.stdin)
-token = os.environ['RENDER_API_KEY']
-names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
-
-for item in data:
-    svc = item.get('service') or item
-    name = svc.get('name', '')
-    if name not in names:
-        continue
-    sid = svc['id']
-
-    # Get latest deploy
-    deploys_req = urllib.request.Request(
-        f'https://api.render.com/v1/services/{sid}/deploys?limit=1',
-        headers={'Authorization': f'Bearer {token}'},
-    )
-    deploys = json.loads(urllib.request.urlopen(deploys_req).read())
-    if isinstance(deploys, list) and len(deploys) > 0:
-        dep = deploys[0].get('deploy', deploys[0])
-        dep_id = dep.get('id', '?')
-        status = dep.get('status', '?')
-        finished_at = dep.get('finishedAt', '')
-        print(f'{name}: deploy {dep_id} -> {status} (finished: {finished_at})')
-    else:
-        print(f'{name}: no deploys found')
-"
+          import json, sys, os, urllib.request
+          data = json.load(sys.stdin)
+          token = os.environ['RENDER_API_KEY']
+          names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
+          for item in data:
+              svc = item.get('service') or item
+              name = svc.get('name', '')
+              if name not in names:
+                  continue
+              sid = svc['id']
+              deploys_req = urllib.request.Request(
+                  f'https://api.render.com/v1/services/{sid}/deploys?limit=1',
+                  headers={'Authorization': f'Bearer {token}'},
+              )
+              deploys = json.loads(urllib.request.urlopen(deploys_req).read())
+              if isinstance(deploys, list) and len(deploys) > 0:
+                  dep = deploys[0].get('deploy', deploys[0])
+                  dep_id = dep.get('id', '?')
+                  status = dep.get('status', '?')
+                  finished_at = dep.get('finishedAt', '')
+                  print(f'{name}: deploy {dep_id} - {status} (finished: {finished_at})')
+              else:
+                  print(f'{name}: no deploys')
+          "
 
   deploy-hooks:
     runs-on: ubuntu-latest
