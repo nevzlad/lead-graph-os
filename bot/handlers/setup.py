@@ -95,6 +95,11 @@ async def process_niche(message: Message, state: FSMContext):
     logger.info(f"Tenant {tenant_id} onboarded successfully.")
 
 
+@router.message(SetupStates.waiting_niche)
+async def process_niche_invalid(message: Message):
+    await message.answer("Пожалуйста, выбери нишу из предложенных кнопок ниже.")
+
+
 @router.message(Command("telemetry"))
 async def cmd_telemetry(message: Message):
     user_id = str(message.from_user.id)

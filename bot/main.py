@@ -32,6 +32,10 @@ async def main() -> None:
     async def on_shutdown() -> None:
         await bot.session.close()
 
+    @dp.errors()
+    async def on_error(event: Exception, data: dict) -> None:
+        logger.error("Bot error: %s", event, exc_info=True)
+
     await dp.start_polling(bot)
 
 
