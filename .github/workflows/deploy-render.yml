@@ -52,7 +52,9 @@ jobs:
               )
               svc_detail = json.loads(urllib.request.urlopen(svc_detail_req).read())
               service_obj = svc_detail.get('service', svc_detail)
-              print(f'Service type: {service_obj.get("type")}, autoDeploy: {service_obj.get("autoDeploy")}')
+              svc_type = service_obj.get('type')
+              svc_ad = service_obj.get('autoDeploy')
+              print(f'Service type: {svc_type}, autoDeploy: {svc_ad}')
               # Check if service has Blueprint info
               suspenders = service_obj.get('suspended', 'not_found')
               service_details = service_obj.get('serviceDetails', {})
