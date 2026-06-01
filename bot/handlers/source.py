@@ -51,6 +51,11 @@ async def _get_sources(tenant_id: str) -> list[Source]:
         return result.scalars().all()
 
 
+@router.message(Command("ping"))
+async def cmd_ping(message: Message):
+    await message.answer("pong")
+
+
 @router.message(Command("source"))
 async def cmd_source(message: Message):
     try:
