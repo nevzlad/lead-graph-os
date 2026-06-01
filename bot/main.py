@@ -4,7 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from bot.handlers import billing, setup, template
+from bot.handlers import billing, setup, source, template
 from bot.middleware.telemetry import TelemetryMiddleware
 from config import settings
 
@@ -22,6 +22,7 @@ async def main() -> None:
     dp.update.outer_middleware(TelemetryMiddleware())
     dp.include_router(setup.router)
     dp.include_router(template.router)
+    dp.include_router(source.router)
     dp.include_router(billing.router)
 
     @dp.startup()

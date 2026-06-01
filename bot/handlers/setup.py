@@ -87,6 +87,7 @@ async def process_niche(message: Message, state: FSMContext):
         f"Ниша: {niche}\n"
         f"Trial активен до {trial_end.strftime('%d.%m.%Y %H:%M')}\n\n"
         f"Команды:\n"
+        f"/source — добавить RSS-источник\n"
         f"/template — смена ниши\n"
         f"/billing — тарифы\n"
         f"/telemetry — opt-in телеметрия (+100 к лимиту API, один раз)",
