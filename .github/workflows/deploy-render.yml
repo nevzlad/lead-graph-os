@@ -39,6 +39,7 @@ jobs:
               svc = item.get('service') or item
               all_names.append(svc.get('name', ''))
           print(f'Services found: {all_names}')
+          import copy
           for item in data:
               svc = item.get('service') or item
               name = svc.get('name', '')
@@ -62,6 +63,11 @@ jobs:
               blueprint_id = service_obj.get('blueprintId') or service_details.get('blueprintId', '')
               repo_info = service_obj.get('repo', '') or service_details.get('repo', '')
               print(f'BlueprintId: {blueprint_id}, Repo: {repo_info}')
+              # Dump full service details for debugging
+              sanitized = copy.deepcopy(service_obj)
+              if 'envVars' in sanitized:
+                  del sanitized['envVars']
+              print(f'FULL_SVC_DUMP: {json.dumps(sanitized, default=str)}')
               cur_req = urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/env-vars',
                   headers={'Authorization': f'Bearer {token}'},
