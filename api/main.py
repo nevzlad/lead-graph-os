@@ -4,8 +4,8 @@ import logging
 from fastapi import FastAPI
 
 from api.routes import public
-from config import settings
 from bot.main import main as bot_main
+from config import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
