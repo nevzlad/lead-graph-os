@@ -12,28 +12,39 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Lead-Graph OS API", version="1.0.0")
 
-_bot_task: asyncio.Task | None = None
+bot_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global _bot_task
+    global bot_task
     logger.info("Starting Telegram bot as background task...")
-    _bot_task = asyncio.create_task(bot_main())
+    bot_task = asyncio.create_task(bot_main())
     logger.info("Bot background task created.")
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global _bot_task
-    if _bot_task:
-        _bot_task.cancel()
+    global bot_task
+    if bot_task:
+        bot_task.cancel()
         try:
-            await _bot_task
+            await bot_task
         except asyncio.CancelledError:
             pass
-        _bot_task = None
+        bot_task = None
         logger.info("Bot background task cancelled.")
+
+
+@app.get("/debug")
+async def debug():
+    global bot_task
+    return {
+        "bot_running": bot_task is not None and not bot_task.done(),
+        "bot_done": bot_task is not None and bot_task.done(),
+        "bot_cancelled": bot_task is not None and bot_task.cancelled(),
+        "mode": settings.MODE,
+    }
 
 
 app.include_router(public.router)
