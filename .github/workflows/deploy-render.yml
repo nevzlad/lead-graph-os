@@ -15,7 +15,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Set env vars and deploy all services
+      - name: Verify or create services, set env vars and deploy
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           ONBOARDING_BOT_TOKEN: ${{ secrets.ONBOARDING_BOT_TOKEN }}
@@ -30,44 +30,84 @@ jobs:
           SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100")
           echo "$SERVICES" | python3 -c "
-          import json, sys, os, urllib.request
+          import json, sys, os, urllib.request, copy
           data = json.load(sys.stdin)
           token = os.environ['RENDER_API_KEY']
-          names = ('leadgraph-api', 'leadgraph-worker', 'leadgraph-bot')
-          all_names = []
+
+          def find_service(data, name):
+              for item in data:
+                  svc = item.get('service') or item
+                  if svc.get('name', '') == name:
+                      return svc
+              return None
+
+          existing_names = []
           for item in data:
               svc = item.get('service') or item
-              all_names.append(svc.get('name', ''))
-          print(f'Services found: {all_names}')
-          import copy
-          for item in data:
-              svc = item.get('service') or item
-              name = svc.get('name', '')
-              if name not in names:
-                  continue
-              sid = svc['id']
-              print(f'Processing: {name} ({sid})')
-              svc_detail_req = urllib.request.Request(
-                  f'https://api.render.com/v1/services/{sid}',
-                  headers={'Authorization': f'Bearer {token}'},
-              )
-              svc_detail = json.loads(urllib.request.urlopen(svc_detail_req).read())
-              service_obj = svc_detail.get('service', svc_detail)
-              svc_type = service_obj.get('type')
-              svc_ad = service_obj.get('autoDeploy')
-              print(f'Service type: {svc_type}, autoDeploy: {svc_ad}')
-              # Check if service has Blueprint info
-              suspenders = service_obj.get('suspended', 'not_found')
-              service_details = service_obj.get('serviceDetails', {})
-              print(f'Suspended: {suspenders}, has serviceDetails: {bool(service_details)}')
-              blueprint_id = service_obj.get('blueprintId') or service_details.get('blueprintId', '')
-              repo_info = service_obj.get('repo', '') or service_details.get('repo', '')
-              print(f'BlueprintId: {blueprint_id}, Repo: {repo_info}')
-              # Dump full service details for debugging
-              sanitized = copy.deepcopy(service_obj)
-              if 'envVars' in sanitized:
-                  del sanitized['envVars']
-              print(f'FULL_SVC_DUMP: {json.dumps(sanitized, default=str)}')
+              existing_names.append(svc.get('name', ''))
+          print(f'Services found: {existing_names}')
+
+          repo_url = 'https://github.com/nevzlad/lead-graph-os'
+
+          SERVICE_DEFS = {
+              'leadgraph-api': {
+                  'type': 'web_service',
+                  'dockerCommand': 'uvicorn api.main:app --host 0.0.0.0 --port \$PORT',
+                  'healthCheckPath': '/health',
+              },
+              'leadgraph-worker': {
+                  'type': 'worker',
+                  'dockerCommand': 'celery -A celery_app worker -Q collector,rewriter,publisher,publisher_dlq --loglevel=info -c 2',
+                  'healthCheckPath': None,
+              },
+              'leadgraph-bot': {
+                  'type': 'worker',
+                  'dockerCommand': 'python -m bot.main',
+                  'healthCheckPath': None,
+              },
+          }
+
+          for name, svc_def in SERVICE_DEFS.items():
+              existing = find_service(data, name)
+              if existing:
+                  sid = existing['id']
+                  print(f'Service exists: {name} ({sid})')
+              else:
+                  print(f'Service missing, creating: {name}')
+                  create_body = {
+                      'type': svc_def['type'],
+                      'name': name,
+                      'env': 'docker',
+                      'repo': repo_url,
+                      'branch': 'main',
+                      'autoDeploy': 'yes',
+                      'serviceDetails': {
+                          'envSpecificDetails': {
+                              'dockerCommand': svc_def['dockerCommand'],
+                              'dockerContext': '.',
+                              'dockerfilePath': './Dockerfile',
+                          },
+                      },
+                  }
+                  if svc_def.get('healthCheckPath'):
+                      create_body['serviceDetails']['healthCheckPath'] = svc_def['healthCheckPath']
+                  create_req = urllib.request.Request(
+                      'https://api.render.com/v1/services',
+                      data=json.dumps(create_body).encode(),
+                      method='POST',
+                      headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+                  )
+                  try:
+                      create_resp_raw = urllib.request.urlopen(create_req).read().decode()
+                      create_resp = json.loads(create_resp_raw)
+                      created_svc = create_resp.get('service', create_resp)
+                      sid = created_svc['id']
+                      print(f'Service created: {name} ({sid})')
+                  except urllib.error.HTTPError as e:
+                      error_body = e.read().decode()
+                      print(f'Error creating {name}: {e.code} {error_body}')
+                      continue
+
               cur_req = urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/env-vars',
                   headers={'Authorization': f'Bearer {token}'},
