@@ -8,7 +8,6 @@ from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, Telegra
 from config import settings
 
 logger = logging.getLogger(__name__)
-bot = Bot(token=settings.TG_BOT_TOKEN)
 
 TG_API_TIMEOUT = 15
 
@@ -16,6 +15,7 @@ TG_API_TIMEOUT = 15
 async def _send_message_async(
     chat_id: str, text: str, parse_mode: str = "HTML"
 ) -> Optional[str]:
+    bot = Bot(token=settings.TG_BOT_TOKEN)
     try:
         msg = await asyncio.wait_for(
             bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode),
@@ -32,6 +32,8 @@ async def _send_message_async(
     except Exception as e:
         logger.error(f"Unexpected TG error: {e}")
         raise
+    finally:
+        await bot.session.close()
 
 
 def send_message(chat_id: str, text: str) -> Optional[str]:
