@@ -52,6 +52,8 @@ jobs:
                       continue
                   if 'generateValue' in ev or 'generateValue' in env_var:
                       continue
+                  if key in ('DATABASE_URL', 'REDIS_URL'):
+                      continue
                   val = ev.get('value') or env_var.get('value', '')
                   if val:
                       env_map[key] = val
@@ -81,9 +83,13 @@ jobs:
                   headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
                   data=b'{}',
               )
-              deploy_resp = json.loads(urllib.request.urlopen(deploy_req).read())
-              deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
-              print(f'Deploy triggered: {name} ({sid}) - deploy ID: {deploy_id}')
+              deploy_resp_raw = urllib.request.urlopen(deploy_req).read().decode()
+              if deploy_resp_raw:
+                  deploy_resp = json.loads(deploy_resp_raw)
+                  deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
+                  print(f'Deploy triggered: {name} ({sid}) - deploy ID: {deploy_id}')
+              else:
+                  print(f'Deploy triggered: {name} ({sid}) - no response body')
           "
       - name: Wait for deploys and check status
         run: |
