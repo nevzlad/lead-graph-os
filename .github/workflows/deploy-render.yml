@@ -48,6 +48,7 @@ jobs:
           print(f'Services found: {existing_names}')
 
           repo_url = 'https://github.com/nevzlad/lead-graph-os'
+          owner_id = 'tea-d8d11u6q1p3s73dv5mj0'
 
           SERVICE_DEFS = {
               'leadgraph-api': {
@@ -81,6 +82,7 @@ jobs:
                       'repo': repo_url,
                       'branch': 'main',
                       'autoDeploy': 'yes',
+                      'ownerId': owner_id,
                       'serviceDetails': {
                           'envSpecificDetails': {
                               'dockerCommand': svc_def['dockerCommand'],
