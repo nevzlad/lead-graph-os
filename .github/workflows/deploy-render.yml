@@ -45,6 +45,13 @@ jobs:
                   continue
               sid = svc['id']
               print(f'Processing: {name} ({sid})')
+              svc_detail_req = urllib.request.Request(
+                  f'https://api.render.com/v1/services/{sid}',
+                  headers={'Authorization': f'Bearer {token}'},
+              )
+              svc_detail = json.loads(urllib.request.urlopen(svc_detail_req).read())
+              service_obj = svc_detail.get('service', svc_detail)
+              print(f'Service type: {service_obj.get(\"type\")}, autoDeploy: {service_obj.get(\"autoDeploy\")}')
               cur_req = urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/env-vars',
                   headers={'Authorization': f'Bearer {token}'},
@@ -57,8 +64,6 @@ jobs:
                   if not key:
                       continue
                   if 'generateValue' in ev or 'generateValue' in env_var:
-                      continue
-                  if key in ('DATABASE_URL', 'REDIS_URL'):
                       continue
                   val = ev.get('value') or env_var.get('value', '')
                   if val:
