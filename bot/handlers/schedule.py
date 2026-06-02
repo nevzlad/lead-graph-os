@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 
 from models import Post, Schedule, TenantConfig
+from services.telegram import strip_html
 from utils.db import async_session_factory
 
 router = Router()
@@ -182,8 +183,9 @@ async def queue_publish_post(callback: CallbackQuery):
     await callback.message.answer("⏳ Публикую...")
 
     from services.telegram import _send_message_async
+    text = strip_html((post.content or "")[:4096])
     try:
-        external_id = await _send_message_async(chat_id, (post.content or "")[:4096])
+        external_id = await _send_message_async(chat_id, text)
     except Exception as e:
         logger.error(f"Manual publish failed: {e}")
         async with async_session_factory() as session:

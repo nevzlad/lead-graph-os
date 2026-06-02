@@ -1,11 +1,16 @@
 import asyncio
 import logging
+import re
 from typing import Optional
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramRetryAfter
 
 from config import settings
+
+
+def strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text).replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").strip()
 
 logger = logging.getLogger(__name__)
 

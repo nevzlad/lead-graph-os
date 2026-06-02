@@ -9,7 +9,7 @@ from collectors.rss import RSSCollector
 from config import settings
 from models import Post, Schedule, Source, TenantConfig
 from services.llm import LLMClient
-from services.telegram import _send_message_async
+from services.telegram import _send_message_async, strip_html
 from utils.db import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -136,7 +136,7 @@ async def publish_post(post_id: int, tenant_id: str, chat_id: str) -> str:
         source = src_result.scalar_one_or_none()
         channel = (source.config or {}).get("tg_channel_id", chat_id)
 
-    text = (post.content or "")[:4096]
+    text = strip_html((post.content or "")[:4096])
     try:
         external_id = await _send_message_async(channel, text)
     except Exception as e:
