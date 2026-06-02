@@ -166,16 +166,14 @@ async def _show_preview(message: Message, state: FSMContext):
             parse_mode="HTML",
         )
 
-    from services.validation import validate_post, format_validation_result
-    vresult = await validate_post(
-        tenant_id=tenant_id,
-        title=title,
-        content=content,
-        skip_db_checks=True,
+    from services.validators import validate_all
+    vresult = validate_all(
+        content=content or "",
+        original=None,
+        target_lang=None,
     )
-    validation_text = format_validation_result(vresult)
-    if not vresult["passed"] or vresult["warnings"]:
-        await message.answer(validation_text)
+    if not vresult["is_valid"]:
+        await message.answer(f"⚠️ Проблемы с контентом:\n" + "\n".join(f"• {i}" for i in vresult["issues"]))
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Опубликовать", callback_data="post:confirm")],
@@ -220,22 +218,15 @@ async def post_confirm(callback: CallbackQuery, state: FSMContext):
     content = data.get("content")
 
     # Validate before saving
-    from services.validation import auto_fix_content, validate_post
-    vresult = await validate_post(
-        tenant_id=data["tenant_id"],
-        title=title,
-        content=content,
+    from services.validators import validate_all
+    vresult = validate_all(
+        content=content or "",
+        original=None,
+        target_lang=None,
     )
-    if vresult["issues"]:
-        content, fixes = await auto_fix_content(content or "", vresult)
-        if fixes:
-            await callback.message.answer(f"🔧 Авто-исправления: {', '.join(fixes)}")
-        else:
-            from services.validation import format_validation_result
-            await callback.message.answer(
-                f"❌ Не все проблемы решены:\n{format_validation_result(vresult)}\n\nИсправь и попробуй снова."
-            )
-            return
+    if not vresult["is_valid"]:
+        await callback.message.answer(f"❌ Контент не прошёл проверку:\n" + "\n".join(f"• {i}" for i in vresult["issues"]))
+        return
 
     post = Post(
         tenant_id=data["tenant_id"],

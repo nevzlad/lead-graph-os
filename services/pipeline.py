@@ -8,14 +8,13 @@ from sqlalchemy import select
 from collectors.rss import RSSCollector
 from config import settings
 from models import Post, Schedule, Source, TenantConfig
-from services.llm import LLMClient
 from services.telegram import _send_message_async, _send_photo_async, strip_html
+from tasks.rewriter import rewrite_post
 from utils.db import async_session_factory
 
 logger = logging.getLogger(__name__)
 
 _rss_collector = RSSCollector()
-_llm_client = LLMClient()
 
 
 async def collect_source(source_id: int, tenant_id: str) -> int:
@@ -68,99 +67,6 @@ async def collect_source(source_id: int, tenant_id: str) -> int:
     if inserted:
         logger.info(f"Tenant {tenant_id}: collected {inserted} items from source {source_id}")
     return inserted
-
-
-async def rewrite_post(post_id: int, tenant_id: str) -> str:
-    async with async_session_factory() as session:
-        result = await session.execute(
-            select(Post).where(
-                Post.id == post_id,
-                Post.tenant_id == tenant_id,
-                Post.status == "raw",
-            )
-        )
-        post = result.scalar_one_or_none()
-        if not post:
-            return "skipped"
-
-        src_result = await session.execute(
-            select(Source).where(Source.id == post.source_id, Source.tenant_id == tenant_id)
-        )
-        source = src_result.scalar_one_or_none()
-        niche = (source.config or {}).get("niche", "news") if source else "news"
-
-        tr = await session.execute(
-            select(TenantConfig.niche).where(TenantConfig.tenant_id == tenant_id)
-        )
-        cfg_niche = tr.scalar_one_or_none()
-        if cfg_niche:
-            niche = cfg_niche
-
-        lang_tr = await session.execute(
-            select(TenantConfig.language).where(TenantConfig.tenant_id == tenant_id)
-        )
-        target_lang = lang_tr.scalar_one_or_none() or "ru"
-
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, lambda: _llm_client.rewrite(tenant_id, niche, post.content or "")
-    )
-
-    rewritten_content = result.get("content", post.content or "")
-    original_content = post.content or ""
-
-    from services.antiplag import add_attribution, ensure_unique
-    rewritten_content, _ = ensure_unique(rewritten_content, original_content)
-    rewritten_content = add_attribution(rewritten_content, post.link)
-
-    # Language check & translate
-    if target_lang != "ru":
-        from services.language import build_translation_prompt, detect_language, needs_translation
-        detected = detect_language(rewritten_content)
-        if needs_translation(detected, target_lang):
-            logger.info("Post %d: detected %s, translating to %s", post_id, detected, target_lang)
-            loop = asyncio.get_running_loop()
-            prompt = build_translation_prompt(rewritten_content, target_lang)
-            tresult = await loop.run_in_executor(
-                None, lambda: _llm_client.rewrite(tenant_id, niche, prompt)
-            )
-            translated = tresult.get("content", rewritten_content)
-            if translated and len(translated) > 20:
-                rewritten_content = translated
-                logger.info("Post %d translated %s→%s", post_id, detected, target_lang)
-
-    # Validate before queue
-    from services.validation import validate_post
-    vresult = await validate_post(
-        tenant_id=tenant_id,
-        title=post.title,
-        content=rewritten_content,
-        original_content=original_content,
-    )
-    if not vresult["passed"]:
-        logger.warning("Post %d validation failed: %s", post_id, [i["code"] for i in vresult["issues"]])
-        if vresult["warnings"]:
-            logger.info("Post %d warnings: %s", post_id, [w["code"] for w in vresult["warnings"]])
-        # Try auto-fix for content issues
-        from services.validation import auto_fix_content
-        rewritten_content, fixes = await auto_fix_content(rewritten_content, vresult)
-        if fixes:
-            logger.info("Post %d auto-fixed: %s", post_id, fixes)
-
-    async with async_session_factory() as session:
-        reresult = await session.execute(
-            select(Post).where(Post.id == post_id, Post.tenant_id == tenant_id)
-        )
-        post = reresult.scalar_one_or_none()
-        if not post:
-            return "skipped"
-        post.content = rewritten_content
-        post.status = "rewritten" if result["status"] == "success" else "rewritten_fallback"
-        post.updated_at = datetime.now(timezone.utc)
-        await session.commit()
-
-    logger.info(f"Tenant {tenant_id}: post {post_id} rewritten ({result['status']})")
-    return result["status"]
 
 
 async def publish_post(post_id: int, tenant_id: str, chat_id: str) -> str:

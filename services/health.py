@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+import httpx
 from sqlalchemy import select, text
 
 from config import settings
@@ -33,20 +34,23 @@ async def check_db() -> bool:
 
 
 async def check_llm() -> bool:
-    from services.llm import PROVIDERS, PROVIDER_HEALTH
-    if not PROVIDERS:
+    from services.llm_router import get_all_providers, get_provider_health, is_circuit_open, record_success
+    all_providers = get_all_providers()
+    if not all_providers:
         return True
     ok = True
-    for provider in PROVIDERS:
+    for p in settings.PROVIDERS:
         try:
-            p_ok = await _check_provider(provider)
-            PROVIDER_HEALTH[provider["name"]] = p_ok
-            if not p_ok:
+            p_ok = await _check_provider(p)
+            if p_ok:
+                record_success(p["name"])
+            else:
+                from services.llm_router import record_error
+                record_error(p["name"])
                 ok = False
         except Exception as e:
-            PROVIDER_HEALTH[provider["name"]] = False
             ok = False
-            logger.error("Provider %s health check failed: %s", provider["name"], e)
+            logger.error("Provider %s health check failed: %s", p["name"], e)
     global _llm_degraded
     if ok and _llm_degraded:
         _llm_degraded = False
@@ -54,53 +58,60 @@ async def check_llm() -> bool:
         await _resolve_errors("llm")
     elif not ok and not _llm_degraded:
         _llm_degraded = True
-        logger.warning("LLM degraded (%d/%d providers unhealthy)",
-                       sum(1 for v in PROVIDER_HEALTH.values() if not v), len(PROVIDER_HEALTH))
+        health = get_provider_health()
+        unhealthy = sum(1 for v in health.values() if not v)
+        logger.warning("LLM degraded (%d/%d providers unhealthy)", unhealthy, len(health))
         await _log_error("llm", "providers_degraded",
-                         f"{sum(1 for v in PROVIDER_HEALTH.values() if not v)}/{len(PROVIDER_HEALTH)} unhealthy")
+                         f"{unhealthy}/{len(health)} unhealthy")
     return ok
 
 
 async def _check_provider(provider: dict) -> bool:
-    import requests
-    loop = asyncio.get_running_loop()
     name = provider["name"]
+    ptype = provider["type"]
+    loop = asyncio.get_running_loop()
 
-    if name in ("huggingface",):
-        headers = {"Authorization": f"Bearer {provider['key']}"}
-        url = f"https://api-inference.huggingface.co/models/{provider['model']}"
-        payload = {"inputs": "ping", "parameters": {"max_new_tokens": 5}}
-        resp = await loop.run_in_executor(
-            None, lambda: requests.post(url, headers=headers, json=payload, timeout=30)
-        )
-        return resp.status_code == 200
+    try:
+        if ptype == "hf":
+            headers = {"Authorization": f"Bearer {provider['key']}"}
+            url = f"https://api-inference.huggingface.co/models/{provider['model']}"
+            resp = await loop.run_in_executor(
+                None, lambda: httpx.post(url, headers=headers,
+                                         json={"inputs": "ping", "parameters": {"max_new_tokens": 5}},
+                                         timeout=30)
+            )
+            return resp.status_code == 200
 
-    if name in ("openai", "groq", "deepseek", "together"):
-        base = provider.get("base_url", "")
-        url = f"{base.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
-        payload = {"model": provider["model"], "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}
-        resp = await loop.run_in_executor(
-            None, lambda: requests.post(url, headers=headers, json=payload, timeout=30)
-        )
-        return resp.status_code == 200
+        elif ptype == "openai_compat":
+            base = provider.get("base_url", "").rstrip("/")
+            url = f"{base}/chat/completions"
+            headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
+            resp = await loop.run_in_executor(
+                None, lambda: httpx.post(url, headers=headers,
+                                         json={"model": provider["model"], "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5},
+                                         timeout=30)
+            )
+            return resp.status_code == 200
 
-    if name == "gemini":
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{provider['model']}:generateContent?key={provider['key']}"
-        payload = {"contents": [{"parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 5}}
-        resp = await loop.run_in_executor(
-            None, lambda: requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
-        )
-        return resp.status_code == 200
+        elif ptype == "gemini":
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{provider['model']}:generateContent?key={provider['key']}"
+            resp = await loop.run_in_executor(
+                None, lambda: httpx.post(url, headers={"Content-Type": "application/json"},
+                                         json={"contents": [{"parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 5}},
+                                         timeout=30)
+            )
+            return resp.status_code == 200
 
-    if name == "cohere":
-        headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
-        payload = {"model": provider["model"], "message": "ping", "max_tokens": 5}
-        resp = await loop.run_in_executor(
-            None, lambda: requests.post("https://api.cohere.com/v2/chat", headers=headers, json=payload, timeout=30)
-        )
-        return resp.status_code == 200
-
+        elif ptype == "cohere":
+            headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
+            resp = await loop.run_in_executor(
+                None, lambda: httpx.post("https://api.cohere.com/v2/chat", headers=headers,
+                                         json={"model": provider["model"], "message": "ping", "max_tokens": 5},
+                                         timeout=30)
+            )
+            return resp.status_code == 200
+    except Exception:
+        return False
     return True
 
 
@@ -143,7 +154,6 @@ async def check_dead_sources() -> int:
             )
             err_list = errors.scalars().all()
             if not err_list:
-                # No recent unresolved errors — safe to reactivate
                 src.is_active = 1
                 src.last_fetched = datetime.now(timezone.utc)
                 recovered += 1
