@@ -29,6 +29,7 @@ async def on_startup():
             "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS auto_publish BOOLEAN DEFAULT TRUE NOT NULL",
             "ALTER TABLE schedules ADD COLUMN IF NOT EXISTS interval_minutes INTEGER DEFAULT 1440 NOT NULL",
             "ALTER TABLE posts ADD COLUMN IF NOT EXISTS image TEXT DEFAULT NULL",
+            "ALTER TABLE posts ADD COLUMN IF NOT EXISTS paused BOOLEAN DEFAULT FALSE NOT NULL",
         ]:
             try:
                 await conn.execute(text(stmt))

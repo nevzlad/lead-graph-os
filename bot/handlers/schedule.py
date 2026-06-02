@@ -36,6 +36,8 @@ class ScheduleStates(StatesGroup):
     choosing_interval = State()
     choosing_custom_interval = State()
     choosing_niche = State()
+    editing_title = State()
+    editing_content = State()
 
 
 async def _get_user_tenants(user_id: str):
@@ -126,7 +128,7 @@ async def autopub_toggle(callback: CallbackQuery):
 
 
 @router.message(Command("queue"))
-async def cmd_queue(message: Message):
+async def cmd_queue(message: Message, page: int = 0):
     user_id = str(message.from_user.id)
     tenants = await _get_user_tenants(user_id)
     if not tenants:
@@ -134,30 +136,85 @@ async def cmd_queue(message: Message):
         return
 
     for t in tenants:
-        async with async_session_factory() as session:
-            rows = await session.execute(
-                select(Post).where(
-                    Post.tenant_id == t.tenant_id,
-                    Post.status.in_(["rewritten", "rewritten_fallback", "scheduled", "draft"]),
-                ).order_by(Post.created_at.desc()).limit(10)
+        await _show_queue_page(message, t, page)
+
+
+async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
+    limit = 10
+    offset = page * limit
+    async with async_session_factory() as session:
+        total = await session.scalar(
+            select(func.count(Post.id)).where(
+                Post.tenant_id == tenant.tenant_id,
+                Post.status.in_(["rewritten", "rewritten_fallback", "scheduled", "draft", "raw"]),
             )
-            posts = rows.scalars().all()
+        )
+        rows = await session.execute(
+            select(Post).where(
+                Post.tenant_id == tenant.tenant_id,
+                Post.status.in_(["rewritten", "rewritten_fallback", "scheduled", "draft", "raw"]),
+            ).order_by(Post.created_at.desc()).offset(offset).limit(limit)
+        )
+        posts = rows.scalars().all()
 
-        if not posts:
-            await message.answer(f"📭 {t.tg_chat_id}: нет постов в очереди")
-            continue
+    if not posts:
+        text = f"📭 {tenant.tg_chat_id}: нет постов в очереди"
+        if isinstance(msg_or_cb, CallbackQuery):
+            await msg_or_cb.answer()
+            await msg_or_cb.message.edit_text(text)
+        else:
+            await msg_or_cb.answer(text)
+        return
 
-        lines = [f"📌 {t.tg_chat_id} — очередь ({len(posts)})"]
-        kb = []
-        for p in posts:
-            tag = "✅" if p.status == "rewritten" else "⚠️"
-            title = (p.title or "—")[:50]
-            lines.append(f"  {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}")
-            kb.append([InlineKeyboardButton(
-                text=f"📄 {title[:40]}",
-                callback_data=f"queue:post:{p.id}",
-            )])
-        await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    max_page = (max(total, 1) - 1) // limit
+    total_pages = max_page + 1 if total else 0
+    niche_icon = {"news": "📰", "blog": "📝", "shop": "🛒"}.get(tenant.niche, "📄")
+    lines = [f"{niche_icon} {tenant.tg_chat_id} — очередь ({total})"]
+    for p in posts:
+        pause_icon = "⏸" if p.paused else ""
+        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
+        tag = pause_icon if p.paused else status_icon
+        title = (p.title or "—")[:50]
+        lines.append(f"  {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}")
+
+    kb = []
+    for p in posts:
+        pause_icon = "⏸" if p.paused else ""
+        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
+        tag = pause_icon or status_icon
+        title = (p.title or "—")[:40]
+        kb.append([InlineKeyboardButton(text=f"{tag} {title}", callback_data=f"queue:post:{p.id}")])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"queue:page:{page - 1}"))
+    if total_pages > 1:
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="queue:noop"))
+    if page < max_page:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"queue:page:{page + 1}"))
+    if nav:
+        kb.append(nav)
+
+    reply = InlineKeyboardMarkup(inline_keyboard=kb)
+    if isinstance(msg_or_cb, CallbackQuery):
+        await msg_or_cb.answer()
+        await msg_or_cb.message.edit_text("\n".join(lines), reply_markup=reply)
+    else:
+        await msg_or_cb.answer("\n".join(lines), reply_markup=reply)
+
+
+@router.callback_query(F.data.startswith("queue:page:"))
+async def queue_page(callback: CallbackQuery):
+    page = int(callback.data.split(":", 2)[2])
+    user_id = str(callback.from_user.id)
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], page)
+
+
+@router.callback_query(F.data == "queue:noop")
+async def queue_noop(callback: CallbackQuery):
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("queue:post:"))
@@ -171,22 +228,38 @@ async def queue_show_post(callback: CallbackQuery):
                 return
 
         status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "published": "📤", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(post.status, "❓")
+        pause_label = "⏸ Приостановлен" if post.paused else ""
+        created = post.created_at.strftime("%d.%m.%Y %H:%M")
+        preview = (post.content or "")[:300]
         text = (
-            f"{status_icon} *{post.title or 'Без названия'}*\n"
+            f"{status_icon} *{post.title or 'Без названия'}* {pause_label}\n"
             f"📊 Статус: {post.status}\n"
-            f"📅 Создан: {post.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-            f"\n{post.content[:500] if post.content else '—'}"
+            f"📅 Создан: {created}\n"
+            f"📝 {preview}{'…' if len((post.content or '')) > 300 else ''}"
         )
         kb_rows = [
-            [InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"queue:preview:{post.id}")],
-            [InlineKeyboardButton(text="📤 Опубликовать сейчас", callback_data=f"queue:publish:{post.id}")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="queue:back")],
+            [InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"queue:preview:{post.id}"),
+             InlineKeyboardButton(text="📤 Опубликовать", callback_data=f"queue:publish:{post.id}")],
+            [InlineKeyboardButton(text="✏️ Заголовок", callback_data=f"queue:edit_title:{post.id}"),
+             InlineKeyboardButton(text="✏️ Текст", callback_data=f"queue:edit_content:{post.id}")],
+            [InlineKeyboardButton(text="⏸ Пауза" if not post.paused else "▶️ Возобновить", callback_data=f"queue:toggle:{post.id}"),
+             InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="queue:list")],
         ]
         await callback.answer()
-        await callback.message.answer(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+        await callback.message.edit_text(text, parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     except Exception as e:
         logger.error("queue:post error: %s", e, exc_info=True)
         await callback.answer(f"❌ {e}", show_alert=True)
+
+
+@router.callback_query(F.data == "queue:list")
+async def queue_back_to_list(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
 
 
 @router.callback_query(F.data.startswith("queue:preview:"))
@@ -210,10 +283,7 @@ async def queue_preview_post(callback: CallbackQuery):
                 parse_mode="HTML",
             )
         else:
-            await callback.message.answer(
-                formatted,
-                parse_mode="HTML",
-            )
+            await callback.message.answer(formatted, parse_mode="HTML")
     except Exception as e:
         logger.error("queue:preview error: %s", e, exc_info=True)
         await callback.answer(f"❌ {e}", show_alert=True)
@@ -238,11 +308,13 @@ async def queue_publish_post(callback: CallbackQuery):
         return
 
     await callback.message.answer("⏳ Публикую...")
-
-    from services.telegram import _send_message_async
+    from services.telegram import _send_message_async, _send_photo_async
     text = strip_html((post.content or "")[:4096])
     try:
-        external_id = await _send_message_async(chat_id, text)
+        if post.image:
+            external_id = await _send_photo_async(chat_id, post.image, text)
+        else:
+            external_id = await _send_message_async(chat_id, text)
     except Exception as e:
         logger.error(f"Manual publish failed: {e}")
         async with async_session_factory() as session:
@@ -264,10 +336,97 @@ async def queue_publish_post(callback: CallbackQuery):
     await callback.message.answer("✅ Пост опубликован!")
 
 
-@router.callback_query(F.data == "queue:back")
-async def queue_back(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("queue:toggle:"))
+async def queue_toggle_post(callback: CallbackQuery):
+    post_id = int(callback.data.split(":", 2)[2])
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if post:
+            post.paused = not post.paused
+            await session.commit()
+            status = "приостановлен" if post.paused else "возобновлён"
+            await callback.answer(f"Пост {status}")
+    # Refresh detail view
+    await queue_show_post(callback)
+
+
+@router.callback_query(F.data.startswith("queue:del:"))
+async def queue_confirm_delete(callback: CallbackQuery):
+    post_id = int(callback.data.split(":", 2)[2])
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"queue:deldone:{post_id}"),
+         InlineKeyboardButton(text="❌ Нет", callback_data=f"queue:post:{post_id}")],
+    ])
     await callback.answer()
-    await callback.message.delete()
+    await callback.message.edit_text("🗑 Удалить пост навсегда?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("queue:deldone:"))
+async def queue_delete_post(callback: CallbackQuery):
+    post_id = int(callback.data.split(":", 2)[2])
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if post:
+            await session.delete(post)
+            await session.commit()
+    await callback.answer("🗑 Пост удалён")
+    user_id = str(callback.from_user.id)
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
+
+
+@router.callback_query(F.data.startswith("queue:edit_title:"))
+async def queue_edit_title_start(callback: CallbackQuery, state: FSMContext):
+    post_id = int(callback.data.split(":", 2)[2])
+    await state.update_data(edit_post_id=post_id)
+    await callback.answer()
+    await callback.message.answer("Введи новый заголовок:")
+    await state.set_state(ScheduleStates.editing_title)
+
+
+@router.message(ScheduleStates.editing_title)
+async def queue_edit_title_done(message: Message, state: FSMContext):
+    data = await state.get_data()
+    post_id = data["edit_post_id"]
+    title = str(message.text).strip()
+    if not title:
+        await message.answer("Заголовок не может быть пустым.")
+        return
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if post:
+            post.title = title
+            await session.commit()
+    await state.clear()
+    await message.answer("✅ Заголовок обновлён!")
+
+
+@router.callback_query(F.data.startswith("queue:edit_content:"))
+async def queue_edit_content_start(callback: CallbackQuery, state: FSMContext):
+    post_id = int(callback.data.split(":", 2)[2])
+    await state.update_data(edit_post_id=post_id)
+    await callback.answer()
+    await callback.message.answer("Введи новый текст поста (или /skip чтобы оставить как есть):")
+    await state.set_state(ScheduleStates.editing_content)
+
+
+@router.message(ScheduleStates.editing_content)
+async def queue_edit_content_done(message: Message, state: FSMContext):
+    data = await state.get_data()
+    post_id = data["edit_post_id"]
+    content = str(message.text).strip()
+    if content == "/skip":
+        await state.clear()
+        await message.answer("Текст не изменён.")
+        return
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if post:
+            post.content = content
+            await session.commit()
+    await state.clear()
+    await message.answer("✅ Текст обновлён!")
 
 
 @router.callback_query(F.data.startswith("sched:add:"))

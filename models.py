@@ -55,6 +55,7 @@ class Post(Base, TenantMixin):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     link: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     image: Mapped[str | None] = mapped_column(Text, nullable=True)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="raw", nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     external_id: Mapped[str | None] = mapped_column(String(100), nullable=True)

@@ -216,6 +216,7 @@ async def _publish_one(tenant_id: str, chat_id: str, niche: str | None = None) -
         q = select(Post).where(
             Post.tenant_id == tenant_id,
             Post.status.in_(["rewritten", "rewritten_fallback"]),
+            Post.paused == False,
         )
         if niche:
             q = q.where(Post.title.ilike(f"%{niche}%"))
@@ -269,6 +270,7 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
                 Post.tenant_id == tenant_id,
                 Post.status == "scheduled",
                 Post.scheduled_at <= now,
+                Post.paused == False,
             ).order_by(Post.scheduled_at).limit(5)
         )
         for post in due.scalars().all():
