@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from models import Post, Schedule, TenantConfig
 from services.telegram import strip_html
+from tasks.rewriter import rewrite_post
 from utils.db import async_session_factory
 
 router = Router()
@@ -200,7 +201,10 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
         badge = ""
         if p.status == "scheduled" and p.scheduled_at:
             badge = f" ⤵{p.scheduled_at.strftime('%H:%M')}"
-        kb.append([InlineKeyboardButton(text=f"{tag} {title}{badge}", callback_data=f"queue:post:{p.id}")])
+        kb.append([
+            InlineKeyboardButton(text=f"{tag} {title}{badge}", callback_data=f"queue:post:{p.id}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"queue:del:{p.id}"),
+        ])
 
     nav = []
     if page > 0:
@@ -264,6 +268,7 @@ async def queue_show_post(callback: CallbackQuery):
              InlineKeyboardButton(text="⏸ Пауза" if not post.paused else "▶️ Возобновить", callback_data=f"queue:toggle:{post.id}")],
             [InlineKeyboardButton(text="🔧 Починить", callback_data=f"queue:repair:{post.id}"),
              InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}")],
+            [InlineKeyboardButton(text="🌐 Перевести", callback_data=f"queue:retranslate:{post.id}")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="queue:list")],
         ]
         await callback.answer()
@@ -432,6 +437,28 @@ async def queue_delete_post(callback: CallbackQuery):
     tenants = await _get_user_tenants(user_id)
     if tenants:
         await _show_queue_page(callback, tenants[0], 0)
+
+
+@router.callback_query(F.data.startswith("queue:retranslate:"))
+async def queue_retranslate_post(callback: CallbackQuery):
+    post_id = int(callback.data.split(":", 2)[2])
+    await callback.answer("⏳ Перевожу...")
+
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if not post:
+            await callback.message.edit_text("❌ Пост не найден")
+            return
+        tenant_id = post.tenant_id
+
+    try:
+        status = await rewrite_post(post_id, tenant_id, force=True)
+        await callback.answer("✅ Перевод завершён")
+    except Exception as e:
+        logger.error("retranslate error: %s", e, exc_info=True)
+        await callback.answer(f"❌ {e}", show_alert=True)
+
+    await queue_show_post(callback)
 
 
 @router.callback_query(F.data.startswith("queue:edit_title:"))

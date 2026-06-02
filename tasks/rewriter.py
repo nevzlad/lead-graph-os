@@ -97,15 +97,12 @@ def process_post(self, post_id: int, tenant_id: str):
         session.close()
 
 
-async def rewrite_post(post_id: int, tenant_id: str) -> str:
+async def rewrite_post(post_id: int, tenant_id: str, force: bool = False) -> str:
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(Post).where(
-                Post.id == post_id,
-                Post.tenant_id == tenant_id,
-                Post.status == "raw",
-            )
-        )
+        conditions = [Post.id == post_id, Post.tenant_id == tenant_id]
+        if not force:
+            conditions.append(Post.status == "raw")
+        result = await session.execute(select(Post).where(*conditions))
         post = result.scalar_one_or_none()
         if not post:
             return "skipped"
