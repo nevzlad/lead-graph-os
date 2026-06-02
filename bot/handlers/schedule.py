@@ -541,8 +541,8 @@ async def queue_retranslate_all(callback: CallbackQuery):
 
     for p in all_posts:
         try:
-            status = await rewrite_post(p.id, tenant_id, force=True)
-            if status in ("rewritten", "rewritten_fallback"):
+            result = await rewrite_post(p.id, tenant_id, force=True)
+            if result in ("rewritten", "rewritten_fallback"):
                 ok += 1
             else:
                 fail += 1

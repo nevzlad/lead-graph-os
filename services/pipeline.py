@@ -160,21 +160,16 @@ async def _should_publish_now(tenant_id: str) -> list[Schedule]:
     return matches
 
 
-async def _publish_one(tenant_id: str, chat_id: str, niche: str | None = None) -> int:
+async def _publish_one(tenant_id: str, chat_id: str) -> int:
     async with async_session_factory() as session:
         q = select(Post).where(
             Post.tenant_id == tenant_id,
             Post.status.in_(["rewritten", "rewritten_fallback"]),
             not Post.paused,
         )
-        if niche:
-            q = q.where(Post.title.ilike(f"%{niche}%"))
         q = q.order_by(Post.created_at).limit(1)
         row = await session.execute(q)
         post = row.scalar_one_or_none()
-
-    if not post and niche:
-        return await _publish_one(tenant_id, chat_id, None)
 
     if not post:
         return 0
@@ -248,7 +243,7 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
     await asyncio.sleep(jitter)
 
     for s in schedules:
-        published = await _publish_one(tenant_id, chat_id, s.niche)
+        published = await _publish_one(tenant_id, chat_id)
         counts["published"] += published
 
     return counts
