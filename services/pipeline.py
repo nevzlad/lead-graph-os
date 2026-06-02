@@ -238,6 +238,15 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
             if status in ("rewritten", "rewritten_fallback"):
                 counts["rewritten"] += 1
 
+    async with async_session_factory() as session:
+        tc = await session.scalar(
+            select(TenantConfig.auto_publish).where(TenantConfig.tenant_id == tenant_id)
+        )
+        auto = tc if tc is not None else True
+
+    if not auto:
+        return counts
+
     schedules = await _should_publish_now(tenant_id)
     if not schedules:
         return counts

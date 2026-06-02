@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -59,8 +60,12 @@ async def cmd_schedule(message: Message, state: FSMContext):
         return
 
     for t in tenants:
+        ap = "✅" if getattr(t, "auto_publish", True) else "❌"
         schedules = await _get_schedules(t.tenant_id)
-        lines = [f"📋 {t.tg_chat_id} ({_niche_label(t.niche)})"]
+        lines = [
+            f"📋 {t.tg_chat_id} ({_niche_label(t.niche)})",
+            f"Автопубликация: {ap}",
+        ]
         if schedules:
             for s in schedules:
                 day = _day_label(s.day_of_week)
@@ -69,10 +74,31 @@ async def cmd_schedule(message: Message, state: FSMContext):
         else:
             lines.append("  Нет расписаний")
         kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"🔄 Автопубликация: {'Вкл' if getattr(t, 'auto_publish', True) else 'Выкл'}",
+                callback_data=f"autopub:toggle:{t.tenant_id}",
+            )],
             [InlineKeyboardButton(text="➕ Добавить расписание", callback_data=f"sched:add:{t.tenant_id}")],
             [InlineKeyboardButton(text="🗑 Удалить расписание", callback_data=f"sched:del_list:{t.tenant_id}")],
         ])
         await message.answer("\n".join(lines), reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("autopub:toggle:"))
+async def autopub_toggle(callback: CallbackQuery):
+    await callback.answer()
+    tenant_id = callback.data.split(":", 2)[2]
+    async with async_session_factory() as session:
+        tc = await session.scalar(
+            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
+        )
+        if tc:
+            tc.auto_publish = not tc.auto_publish
+            await session.commit()
+            status = "включена" if tc.auto_publish else "выключена"
+            await callback.message.answer(f"Автопубликация {status}.")
+        else:
+            await callback.message.answer("Канал не найден.")
 
 
 @router.message(Command("queue"))
@@ -89,7 +115,7 @@ async def cmd_queue(message: Message):
                 select(Post).where(
                     Post.tenant_id == t.tenant_id,
                     Post.status.in_(["rewritten", "rewritten_fallback"]),
-                ).order_by(Post.created_at).limit(10)
+                ).order_by(Post.created_at.desc()).limit(10)
             )
             posts = rows.scalars().all()
 
@@ -98,12 +124,91 @@ async def cmd_queue(message: Message):
             continue
 
         lines = [f"📌 {t.tg_chat_id} — очередь ({len(posts)})"]
+        kb = []
         for p in posts:
             tag = "✅" if p.status == "rewritten" else "⚠️"
-            title = (p.title or "")[:60]
-            time = p.created_at.strftime("%d.%m %H:%M")
-            lines.append(f"  {tag} [{time}] {title}")
-        await message.answer("\n".join(lines))
+            title = (p.title or "—")[:50]
+            lines.append(f"  {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}")
+            kb.append([InlineKeyboardButton(
+                text=f"📄 {title[:40]}",
+                callback_data=f"queue:post:{p.id}",
+            )])
+
+        await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+@router.callback_query(F.data.startswith("queue:post:"))
+async def queue_show_post(callback: CallbackQuery):
+    await callback.answer()
+    post_id = int(callback.data.split(":", 2)[2])
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if not post:
+            await callback.message.answer("Пост не найден.")
+            return
+
+    status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "published": "📤", "raw": "📝"}.get(post.status, "❓")
+    text = (
+        f"{status_icon} *{post.title or 'Без названия'}*\n"
+        f"📊 Статус: {post.status}\n"
+        f"📅 Создан: {post.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"\n{post.content[:500] if post.content else '—'}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Опубликовать сейчас", callback_data=f"queue:publish:{post.id}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="queue:back")],
+    ])
+    await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("queue:publish:"))
+async def queue_publish_post(callback: CallbackQuery):
+    await callback.answer()
+    post_id = int(callback.data.split(":", 2)[2])
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if not post:
+            await callback.message.answer("Пост не найден.")
+            return
+        tenant = await session.scalar(
+            select(TenantConfig).where(TenantConfig.tenant_id == post.tenant_id)
+        )
+        chat_id = tenant.tg_chat_id if tenant else None
+
+    if not chat_id:
+        await callback.message.answer("Канал не найден.")
+        return
+
+    await callback.message.answer("⏳ Публикую...")
+
+    from services.telegram import _send_message_async
+    try:
+        external_id = await _send_message_async(chat_id, (post.content or "")[:4096])
+    except Exception as e:
+        logger.error(f"Manual publish failed: {e}")
+        async with async_session_factory() as session:
+            p = await session.get(Post, post_id)
+            if p:
+                p.status = "failed"
+                await session.commit()
+        await callback.message.answer(f"❌ Ошибка публикации: {e}")
+        return
+
+    async with async_session_factory() as session:
+        p = await session.get(Post, post_id)
+        if p:
+            p.external_id = external_id
+            p.status = "published"
+            p.scheduled_at = datetime.now(timezone.utc)
+            await session.commit()
+
+    await callback.message.answer("✅ Пост опубликован!")
+
+
+@router.callback_query(F.data == "queue:back")
+async def queue_back(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
 
 
 @router.callback_query(F.data.startswith("sched:add:"))

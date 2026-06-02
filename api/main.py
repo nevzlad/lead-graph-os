@@ -24,6 +24,14 @@ async def on_startup():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        from sqlalchemy import text
+        for stmt in [
+            "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS auto_publish BOOLEAN DEFAULT TRUE NOT NULL",
+        ]:
+            try:
+                await conn.execute(text(stmt))
+            except Exception:
+                pass
     logger.info("Database tables created (if not existing).")
 
     logger.info("Starting Telegram bot as background task...")
