@@ -151,6 +151,30 @@ async def debug_cleanup():
         return {"error": str(e), "type": type(e).__name__}
 
 
+@app.get("/debug/process-queue")
+async def debug_process_queue():
+    from services.pipeline import run_tenant_pipeline
+    from sqlalchemy import select
+    from models import TenantConfig
+    from utils.db import async_session_factory
+
+    async with async_session_factory() as session:
+        tenants = await session.execute(
+            select(TenantConfig.tenant_id, TenantConfig.tg_chat_id)
+        )
+        all_tenants = tenants.all()
+
+    if not all_tenants:
+        return {"error": "no_tenants"}
+
+    results = {}
+    for tenant_id, chat_id in all_tenants:
+        counts = await run_tenant_pipeline(tenant_id, chat_id)
+        results[tenant_id] = counts
+
+    return {"processed": results}
+
+
 @app.get("/debug/tenants")
 async def debug_tenants():
     from sqlalchemy import func, select
