@@ -7,6 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, select
 
+from config import settings
 from models import Source, TenantConfig
 from utils.db import async_session_factory
 
