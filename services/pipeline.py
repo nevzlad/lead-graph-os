@@ -196,6 +196,7 @@ async def _should_publish_now(tenant_id: str) -> list[Schedule]:
     if not matches:
         return []
 
+    # Only guard against double-publish within the same 5-min window
     async with async_session_factory() as session:
         last_pub = await session.scalar(
             select(Post.scheduled_at).where(
@@ -204,9 +205,8 @@ async def _should_publish_now(tenant_id: str) -> list[Schedule]:
             ).order_by(Post.scheduled_at.desc()).limit(1)
         )
     if last_pub:
-        min_interval = min(s.interval_minutes for s in matches)
         since_last = (now - last_pub).total_seconds()
-        if since_last < min_interval * 60 * 0.8:
+        if since_last < 60:
             return []
     return matches
 
