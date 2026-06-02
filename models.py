@@ -80,4 +80,5 @@ class Schedule(Base, TenantMixin):
     publish_time: Mapped[str] = mapped_column(String(5), nullable=False)
     niche: Mapped[str] = mapped_column(String(30), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=1440, nullable=False)
     __table_args__ = (Index("ix_schedules_tenant", "tenant_id"),)

@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from config import settings
 from models import Source, TenantConfig
@@ -157,8 +157,22 @@ async def add_source_start(cb: CallbackQuery, state: FSMContext):
 @router.message(AddSourceStates.waiting_url)
 async def add_source_url(message: Message, state: FSMContext):
     url = message.text.strip()
-    await state.update_data(url=url)
+    data = await state.get_data()
 
+    async with async_session_factory() as session:
+        exists = await session.scalar(
+            select(func.count(Source.id)).where(
+                Source.tenant_id == data["tenant_id"],
+                Source.url == url,
+            )
+        )
+    if exists:
+        await message.answer(
+            "❌ Этот URL уже добавлен. Отправь другой URL RSS-ленты:"
+        )
+        return
+
+    await state.update_data(url=url)
     await message.answer(
         "Отправь название источника (например, «Habr» или любой текст):"
     )

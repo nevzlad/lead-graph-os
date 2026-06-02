@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from models import Post, Schedule, TenantConfig
 from services.telegram import strip_html
@@ -18,10 +18,23 @@ logger = logging.getLogger(__name__)
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 WEEKDAY_FULL = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 NICHE_NAMES = {"news": "📰 Новости", "blog": "📝 Блог", "shop": "🛒 Магазин"}
+INTERVALS = [
+    (60, "Каждый час"),
+    (120, "Каждые 2 часа"),
+    (240, "Каждые 4 часа"),
+    (360, "Каждые 6 часов"),
+    (480, "Каждые 8 часов"),
+    (720, "Каждые 12 часов"),
+    (1440, "Раз в день"),
+    (2880, "Раз в 2 дня"),
+    (0, "✏️ Свой период"),
+]
 
 
 class ScheduleStates(StatesGroup):
     choosing_time = State()
+    choosing_interval = State()
+    choosing_custom_interval = State()
     choosing_niche = State()
 
 
@@ -51,6 +64,15 @@ def _niche_label(n: str) -> str:
     return NICHE_NAMES.get(n, n)
 
 
+def _interval_label(m: int) -> str:
+    for val, label in INTERVALS:
+        if val == m:
+            return label
+    if m < 60:
+        return f"Каждые {m} мин"
+    return f"Каждые {m//60} ч"
+
+
 @router.message(Command("schedule"))
 async def cmd_schedule(message: Message, state: FSMContext):
     await state.clear()
@@ -71,7 +93,8 @@ async def cmd_schedule(message: Message, state: FSMContext):
             for s in schedules:
                 day = _day_label(s.day_of_week)
                 status = "✅" if s.is_active else "❌"
-                lines.append(f"  {status} {day} {s.publish_time} — {_niche_label(s.niche)}")
+                interval = _interval_label(s.interval_minutes)
+                lines.append(f"  {status} {day} {s.publish_time} ({interval}) — {_niche_label(s.niche)}")
         else:
             lines.append("  Нет расписаний")
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -134,7 +157,6 @@ async def cmd_queue(message: Message):
                 text=f"📄 {title[:40]}",
                 callback_data=f"queue:post:{p.id}",
             )])
-
         await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
@@ -233,7 +255,7 @@ async def sched_choose_day(callback: CallbackQuery, state: FSMContext):
     day = int(callback.data.split(":", 1)[1])
     await state.update_data(day_of_week=None if day == -1 else day)
     await callback.message.answer(
-        "Время публикации в UTC (формат ЧЧ:ММ, например 14:00):"
+        "Время первой публикации в UTC (формат ЧЧ:ММ, например 08:00):"
     )
     await state.set_state(ScheduleStates.choosing_time)
 
@@ -242,13 +264,52 @@ async def sched_choose_day(callback: CallbackQuery, state: FSMContext):
 async def sched_choose_time(message: Message, state: FSMContext):
     t = str(message.text).strip()
     if not (len(t) == 5 and t[2] == ":" and t[:2].isdigit() and t[3:].isdigit()):
-        await message.answer("Неверный формат. Используй ЧЧ:ММ, например 14:00")
+        await message.answer("Неверный формат. Используй ЧЧ:ММ, например 08:00")
         return
     h, m = int(t[:2]), int(t[3:])
     if h < 0 or h > 23 or m < 0 or m > 59:
-        await message.answer("Время вне диапазона. Используй ЧЧ:ММ от 00:00 до 23:59")
+        await message.answer("Время вне диапазона.")
         return
     await state.update_data(publish_time=t)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=f"sched_int:{val}")]
+        for val, label in INTERVALS
+    ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")]])
+    await message.answer("Периодичность публикаций:", reply_markup=kb)
+    await state.set_state(ScheduleStates.choosing_interval)
+
+
+@router.callback_query(F.data.startswith("sched_int:"))
+async def sched_choose_interval(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    interval = int(callback.data.split(":", 1)[1])
+
+    if interval == 0:
+        await callback.message.answer(
+            "Введи периодичность в минутах (например: 30, 90, 180):"
+        )
+        await state.set_state(ScheduleStates.choosing_custom_interval)
+        return
+
+    await state.update_data(interval_minutes=interval)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📰 Новости", callback_data="sched_niche:news")],
+        [InlineKeyboardButton(text="📝 Блог", callback_data="sched_niche:blog")],
+        [InlineKeyboardButton(text="🛒 Магазин", callback_data="sched_niche:shop")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
+    ])
+    await callback.message.answer("Выбери тематику:", reply_markup=kb)
+    await state.set_state(ScheduleStates.choosing_niche)
+
+
+@router.message(ScheduleStates.choosing_custom_interval)
+async def sched_choose_custom_interval(message: Message, state: FSMContext):
+    raw = str(message.text).strip()
+    if not raw.isdigit() or int(raw) < 10 or int(raw) > 43200:
+        await message.answer("Введи число от 10 до 43200 (минут), например: 30, 180, 1440")
+        return
+    interval = int(raw)
+    await state.update_data(interval_minutes=interval)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📰 Новости", callback_data="sched_niche:news")],
         [InlineKeyboardButton(text="📝 Блог", callback_data="sched_niche:blog")],
@@ -269,6 +330,7 @@ async def sched_choose_niche(callback: CallbackQuery, state: FSMContext):
         f"Подтверди расписание:\n"
         f"📅 {day_label}\n"
         f"⏰ {data['publish_time']} UTC\n"
+        f"🔄 {_interval_label(data['interval_minutes'])}\n"
         f"🏷 {_niche_label(niche)}"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -288,6 +350,7 @@ async def sched_save(callback: CallbackQuery, state: FSMContext):
         day_of_week=data["day_of_week"],
         publish_time=data["publish_time"],
         niche=data["niche"],
+        interval_minutes=data.get("interval_minutes", 1440),
         is_active=True,
     )
     async with async_session_factory() as session:
@@ -332,3 +395,67 @@ async def sched_delete(callback: CallbackQuery):
             await session.delete(s)
             await session.commit()
     await callback.message.answer("🗑 Расписание удалено.")
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    user_id = str(message.from_user.id)
+    tenants = await _get_user_tenants(user_id)
+    if not tenants:
+        await message.answer("Сначала настрой канал: /setup")
+        return
+
+    from models import Source
+    for t in tenants:
+        async with async_session_factory() as session:
+            total_posts = await session.scalar(
+                select(func.count(Post.id)).where(Post.tenant_id == t.tenant_id)
+            )
+            published = await session.scalar(
+                select(func.count(Post.id)).where(
+                    Post.tenant_id == t.tenant_id, Post.status == "published"
+                )
+            )
+            failed = await session.scalar(
+                select(func.count(Post.id)).where(
+                    Post.tenant_id == t.tenant_id, Post.status == "failed"
+                )
+            )
+            queued = await session.scalar(
+                select(func.count(Post.id)).where(
+                    Post.tenant_id == t.tenant_id,
+                    Post.status.in_(["rewritten", "rewritten_fallback"]),
+                )
+            )
+            raw = await session.scalar(
+                select(func.count(Post.id)).where(
+                    Post.tenant_id == t.tenant_id, Post.status == "raw"
+                )
+            )
+            src_count = await session.scalar(
+                select(func.count(Source.id)).where(
+                    Source.tenant_id == t.tenant_id, Source.is_active == 1
+                )
+            )
+            sched_count = await session.scalar(
+                select(func.count(Schedule.id)).where(
+                    Schedule.tenant_id == t.tenant_id, Schedule.is_active
+                )
+            )
+            ap = getattr(t, "auto_publish", True)
+
+        text = (
+            f"📊 *Статистика {t.tg_chat_id}*\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"📰 Всего постов: {total_posts or 0}\n"
+            f"📤 Опубликовано: {published or 0}\n"
+            f"📥 В очереди: {queued or 0}\n"
+            f"📝 Черновики: {raw or 0}\n"
+            f"❌ Ошибки: {failed or 0}\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"📡 Активных RSS: {src_count or 0}\n"
+            f"⏰ Расписаний: {sched_count or 0}\n"
+            f"🔄 Автопубликация: {'✅' if ap else '❌'}\n"
+            f"🏷 Ниша: {_niche_label(t.niche)}"
+        )
+        await message.answer(text, parse_mode="Markdown")

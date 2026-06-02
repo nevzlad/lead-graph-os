@@ -2,7 +2,8 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -30,6 +31,74 @@ NICHE_MAP = {"📰 Новости": "news", "📝 Блог": "blog", "🛒 Ма�
 class SetupStates(StatesGroup):
     waiting_chat_id = State()
     waiting_niche = State()
+
+
+async def _get_pub_bot_info() -> tuple[str | None, int | None]:
+    try:
+        async with Bot(token=settings.TG_BOT_TOKEN) as pub_bot:
+            me = await pub_bot.get_me()
+            return me.username, me.id
+    except Exception as e:
+        logger.error(f"Failed to get pub bot info: {e}")
+        return None, None
+
+
+PERMISSION_GUIDE = """🔐 *Как дать права боту:*
+
+1. Открой настройки канала
+2. Перейди в «Администраторы»
+3. Нажми «Добавить администратора»
+4. Выбери @{bot_username}
+5. Включи права:
+   • 📝 *Отправлять сообщения*
+   • ✏️ *Редактировать сообщения*
+   • 📎 *Прикреплять сообщения* (опционально)
+6. Нажми «Сохранить»
+
+После этого нажми кнопку «🔄 Проверить права»"""
+
+
+async def _check_bot_perms(chat_id: str) -> dict:
+    pub_bot_username, pub_bot_id = await _get_pub_bot_info()
+    if not pub_bot_id:
+        return {"ok": False, "error": "not_available"}
+
+    result = {
+        "ok": False,
+        "exists": False,
+        "is_admin": False,
+        "can_post": False,
+        "can_edit": False,
+        "title": None,
+        "pub_bot_username": pub_bot_username,
+        "pub_bot_id": pub_bot_id,
+        "error": None,
+    }
+
+    try:
+        async with Bot(token=settings.TG_BOT_TOKEN) as bot:
+            chat = await bot.get_chat(chat_id)
+            result["title"] = chat.title or chat.username or chat_id
+            result["exists"] = True
+
+            member = await bot.get_chat_member(chat_id, pub_bot_id)
+            result["is_admin"] = member.status in ("administrator", "creator")
+            if result["is_admin"]:
+                result["can_post"] = (
+                    True if member.status == "creator"
+                    else getattr(member, "can_post_messages", False)
+                )
+                result["can_edit"] = (
+                    True if member.status == "creator"
+                    else getattr(member, "can_edit_messages", False)
+                )
+            result["ok"] = result["can_post"]
+    except TelegramBadRequest:
+        result["error"] = "not_found"
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
 
 
 async def _show_tenants_list(user_id: str, message: Message):
@@ -72,6 +141,14 @@ async def cmd_setup(message: Message, state: FSMContext):
     await _show_tenants_list(str(message.from_user.id), message)
 
 
+@router.callback_query(F.data == "tenant:cancel")
+async def tenant_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _show_tenants_list(str(callback.from_user.id), callback.message)
+
+
 @router.callback_query(F.data.startswith("tenant:"))
 async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -87,9 +164,6 @@ async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
         return
 
     if action[1] == "select":
-        from aiogram import Bot
-        from aiogram.exceptions import TelegramBadRequest
-
         tenant_id = action[2]
         async with async_session_factory() as session:
             result = await session.execute(
@@ -105,45 +179,97 @@ async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
                 )
             )
 
-        perm_status = "⏳"
-        try:
-            async with Bot(token=settings.TG_BOT_TOKEN) as pub_bot:
-                me = await pub_bot.get_me()
-                pub_bot_id = me.id
-                member = await callback.bot.get_chat_member(tenant.tg_chat_id, pub_bot_id)
-                if member.status == "administrator":
-                    cp = getattr(member, "can_post_messages", False)
-                    ce = getattr(member, "can_edit_messages", False)
-                    if cp and ce:
-                        perm_status = "✅"
-                    elif cp:
-                        perm_status = "⚠️ нет права редактировать"
-                    else:
-                        perm_status = "❌"
-                elif member.status == "creator":
-                    perm_status = "✅"
-                else:
-                    perm_status = "❌ бот не администратор"
-        except TelegramBadRequest:
-            perm_status = "❌ канал недоступен"
-        except Exception:
-            perm_status = "❌ ошибка проверки"
+        perms = await _check_bot_perms(tenant.tg_chat_id)
+
+        if perms["ok"]:
+            perm_icon = "✅"
+            perm_detail = "бот администратор, права есть"
+        elif perms["exists"] and perms["is_admin"] and not perms["can_edit"]:
+            perm_icon = "⚠️"
+            perm_detail = "нет права редактировать"
+        elif perms["exists"] and not perms["is_admin"]:
+            perm_icon = "❌"
+            perm_detail = "бот не администратор"
+        elif not perms["exists"]:
+            perm_icon = "❌"
+            perm_detail = "канал недоступен"
+        else:
+            perm_icon = "❌"
+            perm_detail = f"ошибка: {perms['error'] or 'неизвестная'}"
 
         trial_end = tenant.created_at + timedelta(days=settings.TRIAL_DAYS)
         text = (
             f"📌 Канал: {tenant.tg_chat_id}\n"
             f"🏷 Ниша: {tenant.niche}\n"
-            f"🤖 Права бота: {perm_status}\n"
+            f"🤖 Права бота: {perm_icon} {perm_detail}\n"
             f"📊 Статус: {tenant.billing_status}\n"
             f"📡 Активных RSS: {src_count or 0}\n"
             f"📅 Trial до: {trial_end.strftime('%d.%m.%Y')}"
         )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
+
+        kb_rows = []
+        if not perms["ok"]:
+            guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
+            kb_rows.append([InlineKeyboardButton(text="🔐 Инструкция", callback_data=f"perm:guide:{tenant_id}")])
+            kb_rows.append([InlineKeyboardButton(text="🔄 Проверить права", callback_data=f"perm:recheck:{tenant_id}")])
+        else:
+            kb_rows.append([InlineKeyboardButton(text="📡 Управлять RSS", callback_data="cmd:source")])
+            kb_rows.append([InlineKeyboardButton(text="🏷 Сменить нишу", callback_data="cmd:template")])
+            kb_rows.append([InlineKeyboardButton(text="💳 Тарифы", callback_data="cmd:billing")])
+
+        await callback.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+
+@router.callback_query(F.data.startswith("perm:guide:"))
+async def perm_show_guide(callback: CallbackQuery):
+    await callback.answer()
+    tenant_id = callback.data.split(":", 2)[2]
+    pub_bot_username, _ = await _get_pub_bot_info()
+    guide = PERMISSION_GUIDE.format(bot_username=pub_bot_username or "бота")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Проверить права", callback_data=f"perm:recheck:{tenant_id}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data=f"tenant:select:{tenant_id}")],
+    ])
+    await callback.message.answer(guide, parse_mode="Markdown", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("perm:recheck:"))
+async def perm_recheck(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    tenant_id = callback.data.split(":", 2)[2]
+
+    async with async_session_factory() as session:
+        tenant = await session.scalar(
+            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
+        )
+        if not tenant:
+            await callback.message.answer("Канал не найден.")
+            return
+
+    msg = await callback.message.answer("⏳ Проверяю права...")
+    perms = await _check_bot_perms(tenant.tg_chat_id)
+
+    if perms["ok"]:
+        await msg.edit_text(f"✅ Права подтверждены! Бот @{perms.get('pub_bot_username') or 'бот'} может публиковать в канал.")
+        await state.clear()
+        # Redirect back to tenant view
+        await callback.message.answer("Можешь продолжить настройку:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📡 Управлять RSS", callback_data="cmd:source")],
-            [InlineKeyboardButton(text="🏷 Сменить нишу", callback_data="cmd:template")],
-            [InlineKeyboardButton(text="💳 Тарифы", callback_data="cmd:billing")],
-        ])
-        await callback.message.answer(text, reply_markup=kb)
+            [InlineKeyboardButton(text="⏰ Расписание", callback_data="cmd:schedule")],
+            [InlineKeyboardButton(text="🔙 К каналу", callback_data=f"tenant:select:{tenant_id}")],
+        ]))
+        return
+
+    guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"perm:recheck:{tenant_id}")],
+        [InlineKeyboardButton(text="🔙 К каналу", callback_data=f"tenant:select:{tenant_id}")],
+    ])
+    await msg.edit_text(
+        f"❌ Права ещё не настроены.\n\n{guide}",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
 
 
 @router.callback_query(F.data.startswith("cmd:"))
@@ -155,9 +281,6 @@ async def on_cmd_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SetupStates.waiting_chat_id)
 async def process_chat_id(message: Message, state: FSMContext):
-    from aiogram import Bot
-    from aiogram.exceptions import TelegramBadRequest
-
     raw = str(message.text).strip()
     if not (raw.startswith("-100") or raw.startswith("@")):
         await message.answer(
@@ -181,66 +304,43 @@ async def process_chat_id(message: Message, state: FSMContext):
             await state.clear()
             return
 
-    try:
-        chat = await message.bot.get_chat(raw)
-        chat_title = chat.title or chat.username or raw
-    except TelegramBadRequest:
-        chat_title = None
+    perms = await _check_bot_perms(raw)
 
-    pub_bot_username = None
-    pub_bot_id = None
-    try:
-        async with Bot(token=settings.TG_BOT_TOKEN) as pub_bot:
-            me = await pub_bot.get_me()
-            pub_bot_id = me.id
-            pub_bot_username = me.username
-    except Exception:
-        pass
-
-    if chat_title and pub_bot_id:
-        try:
-            member = await message.bot.get_chat_member(raw, pub_bot_id)
-            is_admin = member.status in ("administrator", "creator")
-            can_post = getattr(member, "can_post_messages", False) if member.status == "administrator" else True
-            can_edit = getattr(member, "can_edit_messages", False) if member.status == "administrator" else True
-        except TelegramBadRequest:
-            is_admin = False
-            can_post = False
-            can_edit = False
-    else:
-        is_admin = False
-        can_post = False
-        can_edit = False
-
-    if not chat_title:
+    if not perms["exists"]:
+        guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{raw}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
+        ])
         await message.answer(
-            f"❌ Не удалось найти канал `{raw}`.\n\n"
-            f"1. Добавь бота @{pub_bot_username or 'бота'} в канал как администратор\n"
-            f"2. Выдай права: «Отправлять сообщения», «Редактировать сообщения»\n"
-            f"3. Отправь ID канала ещё раз",
+            f"❌ Не удалось найти канал `{raw}`.\n\n{guide}",
             parse_mode="Markdown",
+            reply_markup=kb,
         )
         return
 
-    if not is_admin or not can_post:
-        perms = []
-        if not can_post:
-            perms.append("📝 Отправлять сообщения")
-        if not can_edit:
-            perms.append("✏️ Редактировать сообщения")
+    if not perms["ok"]:
+        missing = []
+        if not perms["can_post"]:
+            missing.append("📝 Отправлять сообщения")
+        if not perms["can_edit"]:
+            missing.append("✏️ Редактировать сообщения")
+        guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{raw}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
+        ])
         await message.answer(
-            f"❌ Бот @{pub_bot_username or 'бота'} не имеет прав в канале «{chat_title}».\n\n"
-            f"1. Открой настройки канала → Администраторы\n"
-            f"2. Добавь @{pub_bot_username or 'бота'} как администратора\n"
-            "3. Включи права:\n" + "\n".join(f"   • {p}" for p in (perms or ["все права"])) + "\n\n"
-            "4. Отправь ID канала ещё раз"
+            f"❌ Бот @{perms.get('pub_bot_username') or 'бота'} не имеет прав в канале «{perms['title']}».\n\n"
+            + guide,
+            parse_mode="Markdown",
+            reply_markup=kb,
         )
         return
 
     await message.answer(
-        f"✅ Канал «{chat_title}» найден, бот имеет все права."
+        f"✅ Канал «{perms['title']}» найден, бот имеет все права."
     )
-
     await state.update_data(chat_id=raw)
     kb = ReplyKeyboardMarkup(
         keyboard=[
@@ -251,6 +351,44 @@ async def process_chat_id(message: Message, state: FSMContext):
     )
     await message.answer("Выбери нишу для шаблона промптов:", reply_markup=kb)
     await state.set_state(SetupStates.waiting_niche)
+
+
+@router.callback_query(F.data.startswith("chan:recheck:"))
+async def chan_recheck(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    chat_id = callback.data.split(":", 2)[2]
+    msg = await callback.message.answer("⏳ Проверяю права...")
+    perms = await _check_bot_perms(chat_id)
+
+    if perms["ok"]:
+        await msg.edit_text(f"✅ Права подтверждены для «{perms['title']}»!")
+        await state.update_data(chat_id=chat_id)
+        kb = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📰 Новости"), KeyboardButton(text="📝 Блог")],
+                [KeyboardButton(text="🛒 Магазин")],
+            ],
+            resize_keyboard=True,
+        )
+        await callback.message.answer("Выбери нишу для шаблона промптов:", reply_markup=kb)
+        await state.set_state(SetupStates.waiting_niche)
+        return
+
+    missing = []
+    if not perms["can_post"]:
+        missing.append("📝 Отправлять сообщения")
+    if not perms["can_edit"]:
+        missing.append("✏️ Редактировать сообщения")
+    guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{chat_id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
+    ])
+    await msg.edit_text(
+        f"❌ Всё ещё нет прав.\n\n{guide}",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
 
 
 @router.message(SetupStates.waiting_niche, F.text.in_(NICHE_BUTTONS))
@@ -311,7 +449,10 @@ async def process_niche(message: Message, state: FSMContext):
         f"Trial активен до {trial_end.strftime('%d.%m.%Y %H:%M')}\n\n"
         f"Команды:\n"
         f"/source — добавить RSS-источник\n"
+        f"/find — найти качественные источники\n"
         f"/template — смена ниши\n"
+        f"/schedule — расписание публикаций\n"
+        f"/stats — статистика\n"
         f"/billing — тарифы\n"
         f"/telemetry — opt-in телеметрия (+100 к лимиту API, один раз)",
         parse_mode="Markdown",

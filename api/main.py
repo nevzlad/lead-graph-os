@@ -27,6 +27,7 @@ async def on_startup():
         from sqlalchemy import text
         for stmt in [
             "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS auto_publish BOOLEAN DEFAULT TRUE NOT NULL",
+            "ALTER TABLE schedules ADD COLUMN IF NOT EXISTS interval_minutes INTEGER DEFAULT 1440 NOT NULL",
         ]:
             try:
                 await conn.execute(text(stmt))
@@ -35,8 +36,22 @@ async def on_startup():
     logger.info("Database tables created (if not existing).")
 
     logger.info("Starting Telegram bot as background task...")
-    bot_task = asyncio.create_task(bot_main())
-    logger.info("Bot background task created.")
+
+    async def _run_bot():
+        try:
+            await bot_main()
+        except asyncio.CancelledError:
+            logger.info("Bot task cancelled.")
+        except Exception as e:
+            logger.error("Bot task crashed: %s", e, exc_info=True)
+
+    bot_task = asyncio.create_task(_run_bot(), name="telegram-bot")
+    bot_task.add_done_callback(
+        lambda t: logger.error("Bot task done unexpectedly, exception=%s", t.exception())
+        if t.done() and not t.cancelled() and t.exception()
+        else None
+    )
+    logger.info("Bot background task created (id=%s).", bot_task.get_name())
 
     logger.info("Starting pipeline loop...")
     from services.pipeline import pipeline_loop
