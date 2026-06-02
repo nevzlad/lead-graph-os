@@ -87,6 +87,9 @@ async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
         return
 
     if action[1] == "select":
+        from aiogram import Bot
+        from aiogram.exceptions import TelegramBadRequest
+
         tenant_id = action[2]
         async with async_session_factory() as session:
             result = await session.execute(
@@ -102,10 +105,35 @@ async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
                 )
             )
 
+        perm_status = "⏳"
+        try:
+            async with Bot(token=settings.TG_BOT_TOKEN) as pub_bot:
+                me = await pub_bot.get_me()
+                pub_bot_id = me.id
+                member = await callback.bot.get_chat_member(tenant.tg_chat_id, pub_bot_id)
+                if member.status == "administrator":
+                    cp = getattr(member, "can_post_messages", False)
+                    ce = getattr(member, "can_edit_messages", False)
+                    if cp and ce:
+                        perm_status = "✅"
+                    elif cp:
+                        perm_status = "⚠️ нет права редактировать"
+                    else:
+                        perm_status = "❌"
+                elif member.status == "creator":
+                    perm_status = "✅"
+                else:
+                    perm_status = "❌ бот не администратор"
+        except TelegramBadRequest:
+            perm_status = "❌ канал недоступен"
+        except Exception:
+            perm_status = "❌ ошибка проверки"
+
         trial_end = tenant.created_at + timedelta(days=settings.TRIAL_DAYS)
         text = (
             f"📌 Канал: {tenant.tg_chat_id}\n"
             f"🏷 Ниша: {tenant.niche}\n"
+            f"🤖 Права бота: {perm_status}\n"
             f"📊 Статус: {tenant.billing_status}\n"
             f"📡 Активных RSS: {src_count or 0}\n"
             f"📅 Trial до: {trial_end.strftime('%d.%m.%Y')}"
