@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 WEEKDAY_FULL = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 NICHE_NAMES = {"news": "📰 Новости", "blog": "📝 Блог", "shop": "🛒 Магазин"}
+TIME_OPTIONS = [
+    ("Через 30 мин", 30),
+    ("Через 1 час", 60),
+    ("Через 2 часа", 120),
+    ("Через 4 часа", 240),
+    ("Через 8 часов", 480),
+    ("Через 24 часа", 1440),
+    ("Своё время", -1),
+]
 INTERVALS = [
     (60, "Каждый час"),
     (120, "Каждые 2 часа"),
@@ -38,6 +47,8 @@ class ScheduleStates(StatesGroup):
     choosing_niche = State()
     editing_title = State()
     editing_content = State()
+    scheduling_time = State()
+    scheduling_custom_time = State()
 
 
 async def _get_user_tenants(user_id: str):
@@ -175,7 +186,10 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
         status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
         tag = pause_icon if p.paused else status_icon
         title = (p.title or "—")[:50]
-        lines.append(f"  {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}")
+        extra = ""
+        if p.status == "scheduled" and p.scheduled_at:
+            extra = f" ⤵ {p.scheduled_at.strftime('%d.%m %H:%M')}"
+        lines.append(f"  {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}{extra}")
 
     kb = []
     for p in posts:
@@ -183,7 +197,10 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
         status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
         tag = pause_icon or status_icon
         title = (p.title or "—")[:40]
-        kb.append([InlineKeyboardButton(text=f"{tag} {title}", callback_data=f"queue:post:{p.id}")])
+        badge = ""
+        if p.status == "scheduled" and p.scheduled_at:
+            badge = f" ⤵{p.scheduled_at.strftime('%H:%M')}"
+        kb.append([InlineKeyboardButton(text=f"{tag} {title}{badge}", callback_data=f"queue:post:{p.id}")])
 
     nav = []
     if page > 0:
@@ -230,11 +247,12 @@ async def queue_show_post(callback: CallbackQuery):
         status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "published": "📤", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(post.status, "❓")
         pause_label = "⏸ Приостановлен" if post.paused else ""
         created = post.created_at.strftime("%d.%m.%Y %H:%M")
+        scheduled_label = f"\n⏰ Запланирован: {post.scheduled_at.strftime('%d.%m.%Y %H:%M')} UTC" if post.scheduled_at else ""
         preview = (post.content or "")[:300]
         text = (
             f"{status_icon} *{post.title or 'Без названия'}* {pause_label}\n"
             f"📊 Статус: {post.status}\n"
-            f"📅 Создан: {created}\n"
+            f"📅 Создан: {created}{scheduled_label}\n"
             f"📝 {preview}{'…' if len((post.content or '')) > 300 else ''}"
         )
         kb_rows = [
@@ -242,10 +260,11 @@ async def queue_show_post(callback: CallbackQuery):
              InlineKeyboardButton(text="📤 Опубликовать", callback_data=f"queue:publish:{post.id}")],
             [InlineKeyboardButton(text="✏️ Заголовок", callback_data=f"queue:edit_title:{post.id}"),
              InlineKeyboardButton(text="✏️ Текст", callback_data=f"queue:edit_content:{post.id}")],
-            [InlineKeyboardButton(text="⏸ Пауза" if not post.paused else "▶️ Возобновить", callback_data=f"queue:toggle:{post.id}"),
-             InlineKeyboardButton(text="🔧 Починить", callback_data=f"queue:repair:{post.id}")],
-            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}"),
-             InlineKeyboardButton(text="◀️ Назад", callback_data="queue:list")],
+            [InlineKeyboardButton(text="⏰ Отложить", callback_data=f"queue:schedule:{post.id}"),
+             InlineKeyboardButton(text="⏸ Пауза" if not post.paused else "▶️ Возобновить", callback_data=f"queue:toggle:{post.id}")],
+            [InlineKeyboardButton(text="🔧 Починить", callback_data=f"queue:repair:{post.id}"),
+             InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="queue:list")],
         ]
         await callback.answer()
         await callback.message.edit_text(text, parse_mode="Markdown",
@@ -466,6 +485,73 @@ async def queue_edit_content_done(message: Message, state: FSMContext):
             await session.commit()
     await state.clear()
     await message.answer("✅ Текст обновлён!")
+
+
+@router.callback_query(F.data.startswith("queue:schedule:"))
+async def queue_schedule_start(callback: CallbackQuery, state: FSMContext):
+    post_id = int(callback.data.split(":", 2)[2])
+    await state.update_data(schedule_post_id=post_id)
+    await callback.answer()
+    from aiogram.types import InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=f"queue:sched_time:{val}:{post_id}")]
+        for label, val in TIME_OPTIONS
+    ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"queue:post:{post_id}")]])
+    await callback.message.answer("⏰ Через сколько опубликовать?", reply_markup=kb)
+    await state.set_state(ScheduleStates.scheduling_time)
+
+
+@router.callback_query(ScheduleStates.scheduling_time, F.data.startswith("queue:sched_time:"))
+async def queue_schedule_time(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    parts = callback.data.split(":")
+    val = int(parts[2])
+    post_id = int(parts[3])
+
+    if val < 0:
+        await callback.message.answer("Введи время в формате ЧЧ:ММ (UTC), например 14:30:")
+        await state.update_data(schedule_post_id=post_id)
+        await state.set_state(ScheduleStates.scheduling_custom_time)
+        return
+
+    now = datetime.now(timezone.utc)
+    scheduled_at = now + timedelta(minutes=val) if val > 0 else now
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if post:
+            post.scheduled_at = scheduled_at
+            post.status = "scheduled"
+            post.paused = False
+            await session.commit()
+    await state.clear()
+    await callback.message.answer(f"✅ Пост запланирован на {scheduled_at.strftime('%d.%m.%Y %H:%M')} UTC")
+
+
+@router.message(ScheduleStates.scheduling_custom_time)
+async def queue_schedule_custom_time(message: Message, state: FSMContext):
+    t = str(message.text).strip()
+    if not (len(t) == 5 and t[2] == ":" and t[:2].isdigit() and t[3:].isdigit()):
+        await message.answer("Неверный формат. Используй ЧЧ:ММ, например 14:30")
+        return
+    h, m = int(t[:2]), int(t[3:])
+    if h < 0 or h > 23 or m < 0 or m > 59:
+        await message.answer("Время вне диапазона.")
+        return
+    data = await state.get_data()
+    post_id = data["schedule_post_id"]
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if scheduled_at <= now:
+        scheduled_at += timedelta(days=1)
+    async with async_session_factory() as session:
+        post = await session.get(Post, post_id)
+        if post:
+            post.scheduled_at = scheduled_at
+            post.status = "scheduled"
+            post.paused = False
+            await session.commit()
+    await state.clear()
+    await message.answer(f"✅ Пост запланирован на {scheduled_at.strftime('%d.%m.%Y %H:%M')} UTC")
 
 
 @router.callback_query(F.data.startswith("sched:add:"))
