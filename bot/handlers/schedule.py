@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from models import Post, Schedule, TenantConfig
 from services.telegram import strip_html
+from services.validators import check_post_for_queue
 from tasks.rewriter import rewrite_post
 from utils.db import async_session_factory
 
@@ -153,6 +154,7 @@ async def cmd_queue(message: Message, page: int = 0):
 
 async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
     limit = 10
+    target_lang = tenant.language or "ru"
     offset = page * limit
     async with async_session_factory() as session:
         total = await session.scalar(
@@ -169,8 +171,20 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
         )
         posts = rows.scalars().all()
 
-    if not posts:
-        text = f"📭 {tenant.tg_chat_id}: нет постов в очереди"
+    valid_posts = []
+    hidden_count = 0
+    for p in posts:
+        valid, _ = check_post_for_queue(p.content, target_lang, p.status)
+        if valid:
+            valid_posts.append(p)
+        else:
+            hidden_count += 1
+
+    if not valid_posts:
+        if hidden_count > 0:
+            text = f"📭 {tenant.tg_chat_id}: все {hidden_count} постов невалидны"
+        else:
+            text = f"📭 {tenant.tg_chat_id}: нет постов в очереди"
         if isinstance(msg_or_cb, CallbackQuery):
             await msg_or_cb.answer()
             await msg_or_cb.message.edit_text(text)
@@ -181,8 +195,11 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
     max_page = (max(total, 1) - 1) // limit
     total_pages = max_page + 1 if total else 0
     niche_icon = {"news": "📰", "blog": "📝", "shop": "🛒"}.get(tenant.niche, "📄")
-    lines = [f"{niche_icon} {tenant.tg_chat_id} — очередь ({total})"]
-    for p in posts:
+    total_str = str(total)
+    if hidden_count:
+        total_str += f", {hidden_count} скрыто"
+    lines = [f"{niche_icon} {tenant.tg_chat_id} — очередь ({total_str})"]
+    for p in valid_posts:
         pause_icon = "⏸" if p.paused else ""
         status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
         tag = pause_icon if p.paused else status_icon
@@ -193,7 +210,7 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
         lines.append(f"  {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}{extra}")
 
     kb = []
-    for p in posts:
+    for p in valid_posts:
         pause_icon = "⏸" if p.paused else ""
         status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
         tag = pause_icon or status_icon

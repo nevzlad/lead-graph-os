@@ -28,6 +28,11 @@ class LLMRouter:
     FAIL_THRESHOLD = 3
     MIN_CONTENT_LENGTH = 200
 
+    DISABLED_PREFIX = "llm:disabled"
+    OPENC0UNT_PREFIX = "llm:opencount"
+    MAX_CIRCUIT_OPENS = 2
+    DISABLED_TTL = 604800
+
     def __init__(self):
         self._prompt_builder = RewritePromptBuilder()
 
@@ -40,6 +45,38 @@ class LLMRouter:
         except Exception:
             return False
 
+    def _is_permanently_disabled(self, name: str) -> bool:
+        r = _redis()
+        if not r:
+            return False
+        try:
+            return r.exists(f"{self.DISABLED_PREFIX}:{name}") > 0
+        except Exception:
+            return False
+
+    def _permanently_disable(self, name: str):
+        r = _redis()
+        if not r:
+            return
+        try:
+            r.setex(f"{self.DISABLED_PREFIX}:{name}", self.DISABLED_TTL, "1")
+            logger.warning("Provider %s PERMANENTLY DISABLED after repeated circuit opens", name)
+        except Exception as e:
+            logger.error("permanently_disable failed for %s: %s", name, e)
+
+    def _reenable(self, name: str):
+        r = _redis()
+        if not r:
+            return
+        try:
+            r.delete(f"{self.DISABLED_PREFIX}:{name}")
+            r.delete(f"{self.OPENC0UNT_PREFIX}:{name}")
+            r.delete(f"{self.CB_PREFIX}:{name}")
+            r.delete(f"{self.FAILS_PREFIX}:{name}")
+            logger.info("Provider %s re-enabled", name)
+        except Exception as e:
+            logger.error("reenable failed for %s: %s", name, e)
+
     def _record_success(self, name: str):
         r = _redis()
         if not r:
@@ -47,6 +84,8 @@ class LLMRouter:
         try:
             r.delete(f"{self.CB_PREFIX}:{name}")
             r.delete(f"{self.FAILS_PREFIX}:{name}")
+            r.delete(f"{self.OPENC0UNT_PREFIX}:{name}")
+            r.delete(f"{self.DISABLED_PREFIX}:{name}")
         except Exception as e:
             logger.error("record_success failed for %s: %s", name, e)
 
@@ -60,8 +99,14 @@ class LLMRouter:
             r.expire(fails_key, self.CB_TTL)
             if int(count) >= self.FAIL_THRESHOLD:
                 r.setex(f"{self.CB_PREFIX}:{name}", self.CB_TTL, "1")
+                r.delete(fails_key)
                 logger.warning("Circuit BREAKER opened for %s (%d failures, blocking %ds)",
                                name, count, self.CB_TTL)
+                open_key = f"{self.OPENC0UNT_PREFIX}:{name}"
+                open_count = r.incr(open_key)
+                r.expire(open_key, self.DISABLED_TTL)
+                if int(open_count) >= self.MAX_CIRCUIT_OPENS:
+                    self._permanently_disable(name)
         except Exception as e:
             logger.error("record_failure failed for %s: %s", name, e)
 
@@ -150,6 +195,11 @@ class LLMRouter:
                 logger.info("Tenant %s: %s no key, skip", tenant_id, name)
                 continue
 
+            if self._is_permanently_disabled(name):
+                logger.info("Tenant %s: %s permanently disabled, skip", tenant_id, name)
+                errors.append(f"{name}: permanently disabled")
+                continue
+
             if self._is_circuit_open(name):
                 logger.info("Tenant %s: CB open for %s, skip", tenant_id, name)
                 errors.append(f"{name}: circuit open")
@@ -230,19 +280,43 @@ def record_error(provider_name: str):
     _router._record_failure(provider_name)
 
 
-def get_provider_health() -> dict[str, bool]:
+def get_provider_health() -> dict[str, str]:
     health = {}
     for p in FREE_LLM_PROVIDERS:
-        health[p["name"]] = not _router._is_circuit_open(p["name"])
+        name = p["name"]
+        if _router._is_permanently_disabled(name):
+            health[name] = "disabled"
+        elif _router._is_circuit_open(name):
+            health[name] = "broken"
+        else:
+            health[name] = "ok"
     return health
 
 
+def get_disabled_providers() -> list[str]:
+    return [p["name"] for p in FREE_LLM_PROVIDERS if _router._is_permanently_disabled(p["name"])]
+
+
+def get_broken_providers() -> list[str]:
+    return [p["name"] for p in FREE_LLM_PROVIDERS if _router._is_circuit_open(p["name"])]
+
+
 def get_healthy_providers() -> list[str]:
-    return [p["name"] for p in FREE_LLM_PROVIDERS if not _router._is_circuit_open(p["name"])]
+    return [p["name"] for p in FREE_LLM_PROVIDERS
+            if not _router._is_circuit_open(p["name"])
+            and not _router._is_permanently_disabled(p["name"])]
 
 
 def get_all_providers() -> list[str]:
     return [p["name"] for p in FREE_LLM_PROVIDERS]
+
+
+def reenable_provider(name: str) -> bool:
+    for p in FREE_LLM_PROVIDERS:
+        if p["name"] == name:
+            _router._reenable(name)
+            return True
+    return False
 
 
 def write_metric(tenant_id: str, provider_name: str, status: str, duration_ms: int):

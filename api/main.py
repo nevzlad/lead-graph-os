@@ -111,7 +111,8 @@ async def health():
 async def debug():
     global bot_task, pipeline_task, health_task, error_task
     from services.health import is_llm_degraded, is_tg_degraded
-    from services.llm_router import get_all_providers, get_provider_health
+    from services.llm_router import (get_all_providers, get_provider_health,
+                                     get_disabled_providers, get_broken_providers)
     return {
         "bot_running": bot_task is not None and not bot_task.done(),
         "pipeline_running": pipeline_task is not None and not pipeline_task.done(),
@@ -124,6 +125,8 @@ async def debug():
         "providers": {
             "all": get_all_providers(),
             "health": get_provider_health(),
+            "disabled": get_disabled_providers(),
+            "broken": get_broken_providers(),
             "count": len(settings.PROVIDERS),
         },
     }

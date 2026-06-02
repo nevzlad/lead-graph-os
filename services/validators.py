@@ -196,6 +196,21 @@ def check_uniqueness(content: str, original: str, threshold: float | None = None
     return True, None
 
 
+def check_post_for_queue(content: str | None, target_lang: str, status: str = "raw") -> tuple[bool, str | None]:
+    if not content or not content.strip():
+        return False, "empty"
+    stripped = content.strip()
+    if len(stripped) < settings.LLM_MIN_CONTENT_LENGTH:
+        return False, f"too_short:{len(stripped)}"
+    if len(stripped) > 4000:
+        return False, f"too_long:{len(stripped)}"
+    if status in ("rewritten", "rewritten_fallback", "scheduled"):
+        ok, err = _validator._check_language(stripped, target_lang)
+        if not ok:
+            return False, err
+    return True, None
+
+
 def validate_all(
     content: str,
     original: str | None = None,

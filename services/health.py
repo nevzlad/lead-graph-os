@@ -39,11 +39,15 @@ async def check_llm() -> bool:
     if not all_providers:
         return True
     ok = True
+    from services.llm_router import reenable_provider, get_disabled_providers
+    disabled_before = get_disabled_providers()
     for p in settings.PROVIDERS:
         try:
             p_ok = await _check_provider(p)
             if p_ok:
                 record_success(p["name"])
+                if p["name"] in disabled_before:
+                    reenable_provider(p["name"])
             else:
                 from services.llm_router import record_error
                 record_error(p["name"])
