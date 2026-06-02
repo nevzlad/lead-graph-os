@@ -3,7 +3,7 @@ import logging
 import random
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from collectors.rss import RSSCollector
 from config import settings
@@ -176,7 +176,7 @@ async def _should_publish_now(tenant_id: str) -> list[Schedule]:
         rows = await session.execute(
             select(Schedule).where(
                 Schedule.tenant_id == tenant_id,
-                Schedule.is_active == True,
+                Schedule.is_active,
             )
         )
         for s in rows.scalars().all():
