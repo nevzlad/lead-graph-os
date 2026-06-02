@@ -116,7 +116,17 @@ async def debug():
                 pass
         return None
 
+    import bot.main as bot_mod
+    bot_info = None
+    if bot_mod.bot:
+        try:
+            me = await bot_mod.bot.get_me()
+            bot_info = {"id": me.id, "username": me.username, "first_name": me.first_name}
+        except Exception as e:
+            bot_info = {"error": str(e)[:200]}
+
     return {
+        "bot": bot_info,
         "bot_running": bot_task is not None and not bot_task.done(),
         "bot_exception": _exc(bot_task),
         "pipeline_running": pipeline_task is not None and not pipeline_task.done(),
