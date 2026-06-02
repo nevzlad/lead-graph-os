@@ -23,7 +23,7 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     worker_max_tasks_per_child=500,
     task_soft_time_limit=300,
-    task_time_limit=600
+    task_time_limit=600,
 )
 
 celery_app.autodiscover_tasks(["tasks"])

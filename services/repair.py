@@ -5,8 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from config import settings
-from models import Post, ServiceError, Source, TenantConfig
+from models import Post, Source, TenantConfig
 from services.telegram import _send_message_async, _send_photo_async, strip_html
 from utils.db import async_session_factory
 
@@ -141,11 +140,13 @@ async def _apply_fix(post_id: int, issue: str) -> str | None:
 
 def _close_html_tags(content: str, tag: str) -> str:
     pattern = re.compile(rf"<{tag}[^>]*>(.*?)(?:</{tag}>|$)", re.DOTALL)
+
     def _replacer(m):
         inner = m.group(1)
         if f"</{tag}>" not in m.group(0):
             return f"<{tag}>{inner}</{tag}>"
         return m.group(0)
+
     return pattern.sub(_replacer, content)
 
 
@@ -161,9 +162,7 @@ async def retry_publish(post_id: int) -> dict:
         if not post:
             return {"success": False, "error": "post_not_found"}
 
-        tenant = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == post.tenant_id)
-        )
+        tenant = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == post.tenant_id))
         chat_id = tenant.tg_chat_id if tenant else None
 
     if not chat_id:
@@ -217,10 +216,12 @@ async def pipeline_repair_loop():
         try:
             async with async_session_factory() as session:
                 failed_posts = await session.execute(
-                    select(Post).where(
+                    select(Post)
+                    .where(
                         Post.status == "failed",
                         Post.updated_at >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0),
-                    ).limit(10)
+                    )
+                    .limit(10)
                 )
                 for post in failed_posts.scalars().all():
                     logger.info("Auto-repairing failed post %d", post.id)

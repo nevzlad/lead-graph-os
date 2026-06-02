@@ -27,25 +27,31 @@ def publish_post_task(self, post_id: int, tenant_id: str, chat_id: str):
 
     try:
         if not self.request.delivery_info.get("redelivered", False):
-            logger.info(
-                f"Tenant {tenant_id}: post {post_id} scheduled with jitter {jitter:.1f}s"
-            )
+            logger.info(f"Tenant {tenant_id}: post {post_id} scheduled with jitter {jitter:.1f}s")
             raise self.retry(countdown=jitter, exc=RuntimeError("Initial jitter delay"))
 
-        post = db.query(Post).filter(
-            Post.id == post_id,
-            Post.tenant_id == tenant_id,
-            Post.status.in_(["rewritten", "rewritten_fallback"]),
-        ).first()
+        post = (
+            db.query(Post)
+            .filter(
+                Post.id == post_id,
+                Post.tenant_id == tenant_id,
+                Post.status.in_(["rewritten", "rewritten_fallback"]),
+            )
+            .first()
+        )
 
         if not post:
             logger.info(f"Post {post_id} not eligible for publishing tenant {tenant_id}")
             return "skipped"
 
-        source = db.query(Source).filter(
-            Source.id == post.source_id,
-            Source.tenant_id == tenant_id,
-        ).first()
+        source = (
+            db.query(Source)
+            .filter(
+                Source.id == post.source_id,
+                Source.tenant_id == tenant_id,
+            )
+            .first()
+        )
         channel = (source.config or {}).get("tg_channel_id", chat_id)
 
         text = (post.content or "")[:4096]
@@ -56,9 +62,7 @@ def publish_post_task(self, post_id: int, tenant_id: str, chat_id: str):
         post.updated_at = datetime.now(timezone.utc)
         db.commit()
 
-        logger.info(
-            f"Tenant {tenant_id}: post {post_id} published (msg_id={external_id})"
-        )
+        logger.info(f"Tenant {tenant_id}: post {post_id} published (msg_id={external_id})")
         return "published"
 
     except Retry:
@@ -68,10 +72,14 @@ def publish_post_task(self, post_id: int, tenant_id: str, chat_id: str):
         logger.error(f"Publish task failed: {exc}")
 
         if self.request.retries >= self.max_retries:
-            post = db.query(Post).filter(
-                Post.id == post_id,
-                Post.tenant_id == tenant_id,
-            ).first()
+            post = (
+                db.query(Post)
+                .filter(
+                    Post.id == post_id,
+                    Post.tenant_id == tenant_id,
+                )
+                .first()
+            )
             if post:
                 post.status = "failed"
                 post.updated_at = datetime.now(timezone.utc)
@@ -93,7 +101,5 @@ def publish_post_task(self, post_id: int, tenant_id: str, chat_id: str):
     queue="publisher_dlq",
 )
 def handle_dlq_task(post_id: int, tenant_id: str):
-    logger.warning(
-        f"DLQ: manual intervention required for post {post_id}, tenant {tenant_id}"
-    )
+    logger.warning(f"DLQ: manual intervention required for post {post_id}, tenant {tenant_id}")
     return "acknowledged_dlq"

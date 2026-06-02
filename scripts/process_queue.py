@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -12,10 +11,9 @@ load_dotenv()
 
 from sqlalchemy import select
 
-from config import settings
 from models import Post, TenantConfig
-from tasks.rewriter import rewrite_post
 from services.repair import retry_publish
+from tasks.rewriter import rewrite_post
 from utils.db import async_session_factory
 
 logging.basicConfig(level=logging.INFO)
@@ -76,9 +74,7 @@ async def main():
     logger.info("=== Queue Processing Start ===")
 
     async with async_session_factory() as session:
-        tenants = await session.execute(
-            select(TenantConfig.tenant_id, TenantConfig.tg_chat_id)
-        )
+        tenants = await session.execute(select(TenantConfig.tenant_id, TenantConfig.tg_chat_id))
         all_tenants = tenants.all()
 
     if not all_tenants:

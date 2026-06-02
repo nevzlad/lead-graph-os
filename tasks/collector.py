@@ -8,22 +8,19 @@ from models import Post, Source
 
 logger = logging.getLogger(__name__)
 
+
 @celery_app.task(
-    bind=True,
-    name="tasks.collector.fetch_source",
-    max_retries=3,
-    default_retry_delay=120,
-    queue="collector"
+    bind=True, name="tasks.collector.fetch_source", max_retries=3, default_retry_delay=120, queue="collector"
 )
 def fetch_source_task(self, source_id: int, tenant_id: str):
     db = SessionLocal()
     try:
-        source = db.query(Source).filter(
-            Source.id == source_id,
-            Source.tenant_id == tenant_id,
-            Source.is_active == 1
-        ).first()
-        
+        source = (
+            db.query(Source)
+            .filter(Source.id == source_id, Source.tenant_id == tenant_id, Source.is_active == 1)
+            .first()
+        )
+
         if not source:
             logger.info(f"Source {source_id} inactive/not found for tenant {tenant_id}")
             return "skipped"
@@ -37,12 +34,12 @@ def fetch_source_task(self, source_id: int, tenant_id: str):
 
         inserted = 0
         for item in raw_items:
-            exists = db.query(Post).filter(
-                Post.source_id == source_id,
-                Post.tenant_id == tenant_id,
-                Post.title == item["title"]
-            ).first()
-            
+            exists = (
+                db.query(Post)
+                .filter(Post.source_id == source_id, Post.tenant_id == tenant_id, Post.title == item["title"])
+                .first()
+            )
+
             if not exists:
                 new_post = Post(
                     tenant_id=tenant_id,
@@ -50,7 +47,7 @@ def fetch_source_task(self, source_id: int, tenant_id: str):
                     title=item["title"],
                     content=item["content"][:4000],
                     status="raw",
-                    created_at=datetime.now(timezone.utc)
+                    created_at=datetime.now(timezone.utc),
                 )
                 db.add(new_post)
                 inserted += 1

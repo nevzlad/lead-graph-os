@@ -21,9 +21,7 @@ class LanguageStates(StatesGroup):
 
 async def _get_tenant(user_id: str) -> TenantConfig | None:
     async with async_session_factory() as session:
-        return await session.scalar(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        return await session.scalar(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
 
 
 @router.message(Command("language"))
@@ -37,14 +35,15 @@ async def cmd_language(message: Message, state: FSMContext):
     current = tenant.language or "ru"
     lang_label = LANG_NAMES.get(current, current)
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=label, callback_data=f"lang:set:{code}")]
-        for code, label in LANG_NAMES.items()
-    ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="lang:cancel")]])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"lang:set:{code}")] for code, label in LANG_NAMES.items()
+        ]
+        + [[InlineKeyboardButton(text="❌ Отмена", callback_data="lang:cancel")]]
+    )
 
     await message.answer(
-        f"🌍 Текущий язык: {lang_label} ({current})\n"
-        f"Выбери язык для постов:",
+        f"🌍 Текущий язык: {lang_label} ({current})\nВыбери язык для постов:",
         reply_markup=kb,
     )
     await state.set_state(LanguageStates.choosing)
@@ -58,9 +57,7 @@ async def lang_set(callback: CallbackQuery, state: FSMContext):
     tenant_id = data["tenant_id"]
 
     async with async_session_factory() as session:
-        tc = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-        )
+        tc = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
         if tc:
             tc.language = code
             await session.commit()

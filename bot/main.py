@@ -19,7 +19,10 @@ dp: Dispatcher | None = None
 
 async def main() -> None:
     global bot, dp
-    logger.info("Initializing bot with token prefix=%s...", settings.ONBOARDING_BOT_TOKEN[:8] if settings.ONBOARDING_BOT_TOKEN else "NONE")
+    logger.info(
+        "Initializing bot with token prefix=%s...",
+        settings.ONBOARDING_BOT_TOKEN[:8] if settings.ONBOARDING_BOT_TOKEN else "NONE",
+    )
     bot = Bot(token=settings.ONBOARDING_BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.outer_middleware(TelemetryMiddleware())
@@ -51,21 +54,23 @@ async def main() -> None:
         logger.info("Bot startup: tables OK.")
 
         logger.info("Bot startup: setting commands...")
-        await bot.set_my_commands([
-            BotCommand(command="start", description="Начать настройку"),
-            BotCommand(command="setup", description="Настроить канал"),
-            BotCommand(command="template", description="Сменить нишу"),
-            BotCommand(command="source", description="Управлять RSS"),
-            BotCommand(command="schedule", description="Расписание публикаций"),
-            BotCommand(command="queue", description="Очередь постов"),
-            BotCommand(command="find", description="Найти RSS-источники"),
-            BotCommand(command="post", description="Создать пост вручную"),
-            BotCommand(command="stats", description="Статистика и аналитика"),
-            BotCommand(command="billing", description="Тарифы"),
-            BotCommand(command="language", description="Язык постов"),
-            BotCommand(command="telemetry", description="Телеметрия + бонус"),
-            BotCommand(command="help", description="Помощь"),
-        ])
+        await bot.set_my_commands(
+            [
+                BotCommand(command="start", description="Начать настройку"),
+                BotCommand(command="setup", description="Настроить канал"),
+                BotCommand(command="template", description="Сменить нишу"),
+                BotCommand(command="source", description="Управлять RSS"),
+                BotCommand(command="schedule", description="Расписание публикаций"),
+                BotCommand(command="queue", description="Очередь постов"),
+                BotCommand(command="find", description="Найти RSS-источники"),
+                BotCommand(command="post", description="Создать пост вручную"),
+                BotCommand(command="stats", description="Статистика и аналитика"),
+                BotCommand(command="billing", description="Тарифы"),
+                BotCommand(command="language", description="Язык постов"),
+                BotCommand(command="telemetry", description="Телеметрия + бонус"),
+                BotCommand(command="help", description="Помощь"),
+            ]
+        )
         logger.info("Onboarding bot started.")
 
     @dp.shutdown()

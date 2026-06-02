@@ -28,6 +28,7 @@ async def on_startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         from sqlalchemy import text
+
         for stmt in [
             "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS auto_publish BOOLEAN DEFAULT TRUE NOT NULL",
             "ALTER TABLE schedules ADD COLUMN IF NOT EXISTS interval_minutes INTEGER DEFAULT 1440 NOT NULL",
@@ -53,24 +54,29 @@ async def on_startup():
 
     bot_task = asyncio.create_task(_run_bot(), name="telegram-bot")
     bot_task.add_done_callback(
-        lambda t: logger.error("Bot task done unexpectedly, exception=%s", t.exception())
-        if t.done() and not t.cancelled() and t.exception()
-        else None
+        lambda t: (
+            logger.error("Bot task done unexpectedly, exception=%s", t.exception())
+            if t.done() and not t.cancelled() and t.exception()
+            else None
+        )
     )
     logger.info("Bot background task created (id=%s).", bot_task.get_name())
 
     logger.info("Starting pipeline loop...")
     from services.pipeline import pipeline_loop
+
     pipeline_task = asyncio.create_task(pipeline_loop())
     logger.info("Pipeline loop created.")
 
     logger.info("Starting health check loop...")
     from services.health import health_loop
+
     health_task = asyncio.create_task(health_loop())
     logger.info("Health check loop created.")
 
     logger.info("Starting error analyzer loop...")
     from services.errors import analyze_and_fix
+
     async def _error_loop():
         while True:
             try:
@@ -78,11 +84,13 @@ async def on_startup():
             except Exception as e:
                 logger.error("Error analyzer failed: %s", e, exc_info=True)
             await asyncio.sleep(600)
+
     error_task = asyncio.create_task(_error_loop())
     logger.info("Error analyzer loop created.")
 
     logger.info("Starting post repair loop...")
     from services.repair import pipeline_repair_loop
+
     repair_task = asyncio.create_task(pipeline_repair_loop())
     logger.info("Post repair loop created.")
 
@@ -111,8 +119,8 @@ async def health():
 async def debug():
     global bot_task, pipeline_task, health_task, error_task
     from services.health import is_llm_degraded, is_tg_degraded
-    from services.llm_router import (get_all_providers, get_provider_health,
-                                     get_disabled_providers, get_broken_providers)
+    from services.llm_router import get_all_providers, get_broken_providers, get_disabled_providers, get_provider_health
+
     return {
         "bot_running": bot_task is not None and not bot_task.done(),
         "pipeline_running": pipeline_task is not None and not pipeline_task.done(),
@@ -142,9 +150,7 @@ async def debug_cleanup():
     try:
         deleted = 0
         async with async_session_factory() as session:
-            rows = await session.execute(
-                select(TenantConfig).order_by(TenantConfig.created_at)
-            )
+            rows = await session.execute(select(TenantConfig).order_by(TenantConfig.created_at))
             seen = {}
             for row in rows.scalars().all():
                 uid = row.tg_user_id
@@ -161,16 +167,15 @@ async def debug_cleanup():
 
 @app.get("/debug/process-queue")
 async def debug_process_queue():
-    from services.pipeline import run_tenant_pipeline
     from sqlalchemy import select
+
     from models import TenantConfig
+    from services.pipeline import run_tenant_pipeline
     from utils.db import async_session_factory
 
     try:
         async with async_session_factory() as session:
-            tenants = await session.execute(
-                select(TenantConfig.tenant_id, TenantConfig.tg_chat_id)
-            )
+            tenants = await session.execute(select(TenantConfig.tenant_id, TenantConfig.tg_chat_id))
             all_tenants = tenants.all()
 
         if not all_tenants:

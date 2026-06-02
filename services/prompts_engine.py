@@ -75,10 +75,12 @@ class RewritePromptBuilder:
         if validation_error:
             instruction = self.RETRY_INSTRUCTIONS.get(validation_error)
             if instruction:
-                parts.append(instruction.format(
-                    min_len=min_len or settings.LLM_MIN_CONTENT_LENGTH,
-                    target_lang=lang,
-                ))
+                parts.append(
+                    instruction.format(
+                        min_len=min_len or settings.LLM_MIN_CONTENT_LENGTH,
+                        target_lang=lang,
+                    )
+                )
 
         return "".join(parts)
 

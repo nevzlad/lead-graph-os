@@ -31,11 +31,9 @@ def process_post(self, post_id: int, tenant_id: str):
             logger.info("Tenant %s post %d: not found or not raw, skip", tenant_id, post_id)
             return "skipped"
 
-        source = session.get(Source, post.source_id) if post.source_id else None
+        session.get(Source, post.source_id) if post.source_id else None
 
-        tc = session.execute(
-            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-        ).scalar_one_or_none()
+        tc = session.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)).scalar_one_or_none()
         if tc:
             target_lang = tc.language or settings.TARGET_LANGUAGE
         else:
@@ -58,8 +56,9 @@ def process_post(self, post_id: int, tenant_id: str):
         is_valid = validation["is_valid"]
 
         if not is_valid:
-            logger.info("Tenant %s post %d: validation failed %s, retry router",
-                        tenant_id, post_id, validation["errors"])
+            logger.info(
+                "Tenant %s post %d: validation failed %s, retry router", tenant_id, post_id, validation["errors"]
+            )
             result2 = router.rewrite_with_failover(tenant_id, raw_content, target_lang)
             rewritten2 = result2.get("content", raw_content)
             provider2 = result2.get("provider")
@@ -70,8 +69,12 @@ def process_post(self, post_id: int, tenant_id: str):
                 provider = provider2
                 is_valid = True
             else:
-                logger.warning("Tenant %s post %d: retry also failed validation %s, fallback",
-                               tenant_id, post_id, validation2["errors"])
+                logger.warning(
+                    "Tenant %s post %d: retry also failed validation %s, fallback",
+                    tenant_id,
+                    post_id,
+                    validation2["errors"],
+                )
                 rewritten = strip_html(raw_content)
 
         rewritten = add_attribution(rewritten, post_link)
@@ -84,8 +87,15 @@ def process_post(self, post_id: int, tenant_id: str):
         post.updated_at = datetime.now(timezone.utc)
         session.commit()
 
-        logger.info("Tenant %s post %d: provider=%s is_valid=%s status=%s length=%d",
-                    tenant_id, post_id, provider, is_valid, post.status, len(rewritten))
+        logger.info(
+            "Tenant %s post %d: provider=%s is_valid=%s status=%s length=%d",
+            tenant_id,
+            post_id,
+            provider,
+            is_valid,
+            post.status,
+            len(rewritten),
+        )
         return post.status
 
     except Exception as exc:
@@ -111,14 +121,12 @@ async def rewrite_post(post_id: int, tenant_id: str, force: bool = False) -> str
             select(Source).where(Source.id == post.source_id, Source.tenant_id == tenant_id)
         )
         source = src_result.scalar_one_or_none()
-        niche = (source.config or {}).get("niche", "news") if source else "news"
+        (source.config or {}).get("niche", "news") if source else "news"
 
-        tc = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-        )
+        tc = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
         if tc:
             if tc.niche:
-                niche = tc.niche
+                pass
             target_lang = tc.language or settings.TARGET_LANGUAGE
         else:
             target_lang = settings.TARGET_LANGUAGE
@@ -158,8 +166,7 @@ async def rewrite_post(post_id: int, tenant_id: str, force: bool = False) -> str
             provider = provider2
             is_valid = True
         else:
-            logger.warning("Post %d: retry also failed validation %s, fallback",
-                           post_id, validation2["errors"])
+            logger.warning("Post %d: retry also failed validation %s, fallback", post_id, validation2["errors"])
             rewritten = strip_html(raw_content)
 
     rewritten = add_attribution(rewritten, post_link)
@@ -176,6 +183,13 @@ async def rewrite_post(post_id: int, tenant_id: str, force: bool = False) -> str
         post.updated_at = datetime.now(timezone.utc)
         await session.commit()
 
-    logger.info("Tenant %s post %d: provider=%s is_valid=%s status=%s length=%d",
-                tenant_id, post_id, provider, is_valid, post.status, len(rewritten))
+    logger.info(
+        "Tenant %s post %d: provider=%s is_valid=%s status=%s length=%d",
+        tenant_id,
+        post_id,
+        provider,
+        is_valid,
+        post.status,
+        len(rewritten),
+    )
     return post.status

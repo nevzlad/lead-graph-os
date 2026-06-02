@@ -10,16 +10,23 @@ from config import settings
 
 
 def strip_html(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text).replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").strip()
+    return (
+        re.sub(r"<[^>]+>", "", text)
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .strip()
+    )
+
 
 logger = logging.getLogger(__name__)
 
 TG_API_TIMEOUT = 15
 
 
-async def _send_message_async(
-    chat_id: str, text: str, parse_mode: str = "HTML"
-) -> Optional[str]:
+async def _send_message_async(chat_id: str, text: str, parse_mode: str = "HTML") -> Optional[str]:
     bot = Bot(token=settings.TG_BOT_TOKEN)
     try:
         msg = await asyncio.wait_for(
@@ -41,9 +48,7 @@ async def _send_message_async(
         await bot.session.close()
 
 
-async def _send_photo_async(
-    chat_id: str, photo: str, caption: str, parse_mode: str = "HTML"
-) -> Optional[str]:
+async def _send_photo_async(chat_id: str, photo: str, caption: str, parse_mode: str = "HTML") -> Optional[str]:
     bot = Bot(token=settings.TG_BOT_TOKEN)
     try:
         msg = await asyncio.wait_for(

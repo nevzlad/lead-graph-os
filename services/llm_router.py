@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 def _redis():
     try:
         import redis as _redis
+
         return _redis.from_url(settings.REDIS_URL, socket_timeout=3, decode_responses=True)
     except Exception:
         return None
@@ -100,8 +101,7 @@ class LLMRouter:
             if int(count) >= self.FAIL_THRESHOLD:
                 r.setex(f"{self.CB_PREFIX}:{name}", self.CB_TTL, "1")
                 r.delete(fails_key)
-                logger.warning("Circuit BREAKER opened for %s (%d failures, blocking %ds)",
-                               name, count, self.CB_TTL)
+                logger.warning("Circuit BREAKER opened for %s (%d failures, blocking %ds)", name, count, self.CB_TTL)
                 open_key = f"{self.OPENC0UNT_PREFIX}:{name}"
                 open_count = r.incr(open_key)
                 r.expire(open_key, self.DISABLED_TTL)
@@ -215,15 +215,19 @@ class LLMRouter:
 
                 if content and len(content) >= self.MIN_CONTENT_LENGTH:
                     self._record_success(name)
-                    logger.info("Tenant %s: provider=%s status=success duration=%dms chars=%d",
-                                tenant_id, name, duration, len(content))
+                    logger.info(
+                        "Tenant %s: provider=%s status=success duration=%dms chars=%d",
+                        tenant_id,
+                        name,
+                        duration,
+                        len(content),
+                    )
                     return {"status": "success", "content": content, "provider": name}
                 else:
                     self._record_failure(name)
                     reason = "empty" if not content else f"too_short:{len(content)}"
                     errors.append(f"{name}: {reason}")
-                    logger.warning("Tenant %s: provider=%s %s (duration=%dms)",
-                                   tenant_id, name, reason, duration)
+                    logger.warning("Tenant %s: provider=%s %s (duration=%dms)", tenant_id, name, reason, duration)
             except httpx.TimeoutException:
                 self._record_failure(name)
                 duration = int((time.monotonic() - start) * 1000)
@@ -302,9 +306,11 @@ def get_broken_providers() -> list[str]:
 
 
 def get_healthy_providers() -> list[str]:
-    return [p["name"] for p in FREE_LLM_PROVIDERS
-            if not _router._is_circuit_open(p["name"])
-            and not _router._is_permanently_disabled(p["name"])]
+    return [
+        p["name"]
+        for p in FREE_LLM_PROVIDERS
+        if not _router._is_circuit_open(p["name"]) and not _router._is_permanently_disabled(p["name"])
+    ]
 
 
 def get_all_providers() -> list[str]:
@@ -325,13 +331,15 @@ def write_metric(tenant_id: str, provider_name: str, status: str, duration_ms: i
         return
     try:
         day_key = f"llm:health:{tenant_id}:{provider_name}:{datetime.now(timezone.utc).strftime('%Y%m%d')}"
-        entry = json.dumps({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "provider": provider_name,
-            "tenant_id": tenant_id,
-            "status": status,
-            "duration_ms": duration_ms,
-        })
+        entry = json.dumps(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "provider": provider_name,
+                "tenant_id": tenant_id,
+                "status": status,
+                "duration_ms": duration_ms,
+            }
+        )
         r.rpush(day_key, entry)
         r.expire(day_key, settings.LLM_REDIS_TTL)
     except Exception as e:

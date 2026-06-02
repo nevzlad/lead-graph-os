@@ -84,14 +84,8 @@ async def _check_bot_perms(chat_id: str) -> dict:
             member = await bot.get_chat_member(chat_id, pub_bot_id)
             result["is_admin"] = member.status in ("administrator", "creator")
             if result["is_admin"]:
-                result["can_post"] = (
-                    True if member.status == "creator"
-                    else getattr(member, "can_post_messages", False)
-                )
-                result["can_edit"] = (
-                    True if member.status == "creator"
-                    else getattr(member, "can_edit_messages", False)
-                )
+                result["can_post"] = True if member.status == "creator" else getattr(member, "can_post_messages", False)
+                result["can_edit"] = True if member.status == "creator" else getattr(member, "can_edit_messages", False)
             result["ok"] = result["can_post"]
     except TelegramBadRequest:
         result["error"] = "not_found"
@@ -103,9 +97,7 @@ async def _check_bot_perms(chat_id: str) -> dict:
 
 async def _show_tenants_list(user_id: str, message: Message):
     async with async_session_factory() as session:
-        rows = await session.execute(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        rows = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
         tenants = rows.scalars().all()
 
     if not tenants:
@@ -157,8 +149,7 @@ async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
     if action[1] == "add":
         await state.update_data(adding_new=True)
         await callback.message.answer(
-            "Отправь ID Telegram-канала или группы, "
-            "куда будем постить (начинается с -100 или @username канала)."
+            "Отправь ID Telegram-канала или группы, куда будем постить (начинается с -100 или @username канала)."
         )
         await state.set_state(SetupStates.waiting_chat_id)
         return
@@ -166,17 +157,13 @@ async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
     if action[1] == "select":
         tenant_id = action[2]
         async with async_session_factory() as session:
-            result = await session.execute(
-                select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-            )
+            result = await session.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
             tenant = result.scalar_one_or_none()
             if not tenant:
                 await callback.message.answer("Канал не найден.")
                 return
             src_count = await session.scalar(
-                select(func.count(Source.id)).where(
-                    Source.tenant_id == tenant_id, Source.is_active == 1
-                )
+                select(func.count(Source.id)).where(Source.tenant_id == tenant_id, Source.is_active == 1)
             )
 
         perms = await _check_bot_perms(tenant.tg_chat_id)
@@ -209,7 +196,7 @@ async def on_tenant_callback(callback: CallbackQuery, state: FSMContext):
 
         kb_rows = []
         if not perms["ok"]:
-            guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
+            PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
             kb_rows.append([InlineKeyboardButton(text="🔐 Инструкция", callback_data=f"perm:guide:{tenant_id}")])
             kb_rows.append([InlineKeyboardButton(text="🔄 Проверить права", callback_data=f"perm:recheck:{tenant_id}")])
         else:
@@ -226,10 +213,12 @@ async def perm_show_guide(callback: CallbackQuery):
     tenant_id = callback.data.split(":", 2)[2]
     pub_bot_username, _ = await _get_pub_bot_info()
     guide = PERMISSION_GUIDE.format(bot_username=pub_bot_username or "бота")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Проверить права", callback_data=f"perm:recheck:{tenant_id}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data=f"tenant:select:{tenant_id}")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Проверить права", callback_data=f"perm:recheck:{tenant_id}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data=f"tenant:select:{tenant_id}")],
+        ]
+    )
     await callback.message.answer(guide, parse_mode="Markdown", reply_markup=kb)
 
 
@@ -239,9 +228,7 @@ async def perm_recheck(callback: CallbackQuery, state: FSMContext):
     tenant_id = callback.data.split(":", 2)[2]
 
     async with async_session_factory() as session:
-        tenant = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-        )
+        tenant = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
         if not tenant:
             await callback.message.answer("Канал не найден.")
             return
@@ -250,21 +237,30 @@ async def perm_recheck(callback: CallbackQuery, state: FSMContext):
     perms = await _check_bot_perms(tenant.tg_chat_id)
 
     if perms["ok"]:
-        await msg.edit_text(f"✅ Права подтверждены! Бот @{perms.get('pub_bot_username') or 'бот'} может публиковать в канал.")
+        await msg.edit_text(
+            f"✅ Права подтверждены! Бот @{perms.get('pub_bot_username') or 'бот'} может публиковать в канал."
+        )
         await state.clear()
         # Redirect back to tenant view
-        await callback.message.answer("Можешь продолжить настройку:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📡 Управлять RSS", callback_data="cmd:source")],
-            [InlineKeyboardButton(text="⏰ Расписание", callback_data="cmd:schedule")],
-            [InlineKeyboardButton(text="🔙 К каналу", callback_data=f"tenant:select:{tenant_id}")],
-        ]))
+        await callback.message.answer(
+            "Можешь продолжить настройку:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📡 Управлять RSS", callback_data="cmd:source")],
+                    [InlineKeyboardButton(text="⏰ Расписание", callback_data="cmd:schedule")],
+                    [InlineKeyboardButton(text="🔙 К каналу", callback_data=f"tenant:select:{tenant_id}")],
+                ]
+            ),
+        )
         return
 
     guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"perm:recheck:{tenant_id}")],
-        [InlineKeyboardButton(text="🔙 К каналу", callback_data=f"tenant:select:{tenant_id}")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"perm:recheck:{tenant_id}")],
+            [InlineKeyboardButton(text="🔙 К каналу", callback_data=f"tenant:select:{tenant_id}")],
+        ]
+    )
     await msg.edit_text(
         f"❌ Права ещё не настроены.\n\n{guide}",
         parse_mode="Markdown",
@@ -283,10 +279,7 @@ async def on_cmd_callback(callback: CallbackQuery, state: FSMContext):
 async def process_chat_id(message: Message, state: FSMContext):
     raw = str(message.text).strip()
     if not (raw.startswith("-100") or raw.startswith("@")):
-        await message.answer(
-            "❌ Неверный формат. ID канала должен начинаться с -100 или @username.\n"
-            "Попробуй ещё раз:"
-        )
+        await message.answer("❌ Неверный формат. ID канала должен начинаться с -100 или @username.\nПопробуй ещё раз:")
         return
 
     user_id = str(message.from_user.id)
@@ -298,9 +291,7 @@ async def process_chat_id(message: Message, state: FSMContext):
             )
         )
         if dup:
-            await message.answer(
-                "❌ Этот канал уже добавлен. Используй /start чтобы увидеть список каналов."
-            )
+            await message.answer("❌ Этот канал уже добавлен. Используй /start чтобы увидеть список каналов.")
             await state.clear()
             return
 
@@ -308,10 +299,12 @@ async def process_chat_id(message: Message, state: FSMContext):
 
     if not perms["exists"]:
         guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{raw}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{raw}")],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
+            ]
+        )
         await message.answer(
             f"❌ Не удалось найти канал `{raw}`.\n\n{guide}",
             parse_mode="Markdown",
@@ -326,21 +319,20 @@ async def process_chat_id(message: Message, state: FSMContext):
         if not perms["can_edit"]:
             missing.append("✏️ Редактировать сообщения")
         guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{raw}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{raw}")],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
+            ]
+        )
         await message.answer(
-            f"❌ Бот @{perms.get('pub_bot_username') or 'бота'} не имеет прав в канале «{perms['title']}».\n\n"
-            + guide,
+            f"❌ Бот @{perms.get('pub_bot_username') or 'бота'} не имеет прав в канале «{perms['title']}».\n\n" + guide,
             parse_mode="Markdown",
             reply_markup=kb,
         )
         return
 
-    await message.answer(
-        f"✅ Канал «{perms['title']}» найден, бот имеет все права."
-    )
+    await message.answer(f"✅ Канал «{perms['title']}» найден, бот имеет все права.")
     await state.update_data(chat_id=raw)
     kb = ReplyKeyboardMarkup(
         keyboard=[
@@ -380,10 +372,12 @@ async def chan_recheck(callback: CallbackQuery, state: FSMContext):
     if not perms["can_edit"]:
         missing.append("✏️ Редактировать сообщения")
     guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{chat_id}")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{chat_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="tenant:cancel")],
+        ]
+    )
     await msg.edit_text(
         f"❌ Всё ещё нет прав.\n\n{guide}",
         parse_mode="Markdown",
@@ -401,13 +395,9 @@ async def process_niche(message: Message, state: FSMContext):
 
     async with async_session_factory() as session:
         if not adding_new:
-            existing = await session.scalar(
-                select(TenantConfig.tenant_id).where(TenantConfig.tg_user_id == user_id)
-            )
+            existing = await session.scalar(select(TenantConfig.tenant_id).where(TenantConfig.tg_user_id == user_id))
             if existing:
-                result = await session.execute(
-                    select(TenantConfig).where(TenantConfig.tenant_id == existing)
-                )
+                result = await session.execute(select(TenantConfig).where(TenantConfig.tenant_id == existing))
                 config = result.scalar_one()
                 config.niche = niche
                 config.updated_at = now
@@ -472,18 +462,14 @@ async def cmd_telemetry(message: Message):
     now = datetime.now(timezone.utc)
 
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        result = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
         config = result.scalars().first()
         if not config:
             await message.answer("Сначала пройди онбординг: /setup")
             return
 
         if config.telemetry_opt_in:
-            await message.answer(
-                f"Телеметрия уже включена. Бонус к лимиту API: +{config.api_limit_bonus}"
-            )
+            await message.answer(f"Телеметрия уже включена. Бонус к лимиту API: +{config.api_limit_bonus}")
             return
 
         config.telemetry_opt_in = True
@@ -495,7 +481,6 @@ async def cmd_telemetry(message: Message):
         await session.commit()
 
     await message.answer(
-        f"✅ Спасибо! Включена обезличенная телеметрия.\n"
-        f"Начислен бонус к лимиту API: +{bonus} запросов/час (один раз)."
+        f"✅ Спасибо! Включена обезличенная телеметрия.\nНачислен бонус к лимиту API: +{bonus} запросов/час (один раз)."
     )
     logger.info(f"Tenant {tenant_id}: telemetry opt-in, bonus={bonus}")

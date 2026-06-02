@@ -55,9 +55,7 @@ class ScheduleStates(StatesGroup):
 
 async def _get_user_tenants(user_id: str):
     async with async_session_factory() as session:
-        rows = await session.execute(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        rows = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
         return rows.scalars().all()
 
 
@@ -85,7 +83,7 @@ def _interval_label(m: int) -> str:
             return label
     if m < 60:
         return f"Каждые {m} мин"
-    return f"Каждые {m//60} ч"
+    return f"Каждые {m // 60} ч"
 
 
 @router.message(Command("schedule"))
@@ -112,14 +110,18 @@ async def cmd_schedule(message: Message, state: FSMContext):
                 lines.append(f"  {status} {day} {s.publish_time} ({interval}) — {_niche_label(s.niche)}")
         else:
             lines.append("  Нет расписаний")
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"🔄 Автопубликация: {'Вкл' if getattr(t, 'auto_publish', True) else 'Выкл'}",
-                callback_data=f"autopub:toggle:{t.tenant_id}",
-            )],
-            [InlineKeyboardButton(text="➕ Добавить расписание", callback_data=f"sched:add:{t.tenant_id}")],
-            [InlineKeyboardButton(text="🗑 Удалить расписание", callback_data=f"sched:del_list:{t.tenant_id}")],
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"🔄 Автопубликация: {'Вкл' if getattr(t, 'auto_publish', True) else 'Выкл'}",
+                        callback_data=f"autopub:toggle:{t.tenant_id}",
+                    )
+                ],
+                [InlineKeyboardButton(text="➕ Добавить расписание", callback_data=f"sched:add:{t.tenant_id}")],
+                [InlineKeyboardButton(text="🗑 Удалить расписание", callback_data=f"sched:del_list:{t.tenant_id}")],
+            ]
+        )
         await message.answer("\n".join(lines), reply_markup=kb)
 
 
@@ -128,9 +130,7 @@ async def autopub_toggle(callback: CallbackQuery):
     await callback.answer()
     tenant_id = callback.data.split(":", 2)[2]
     async with async_session_factory() as session:
-        tc = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-        )
+        tc = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
         if tc:
             tc.auto_publish = not tc.auto_publish
             await session.commit()
@@ -164,10 +164,14 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
             )
         )
         rows = await session.execute(
-            select(Post).where(
+            select(Post)
+            .where(
                 Post.tenant_id == tenant.tenant_id,
                 Post.status.in_(["rewritten", "rewritten_fallback", "scheduled", "draft", "raw"]),
-            ).order_by(Post.created_at.desc()).offset(offset).limit(limit)
+            )
+            .order_by(Post.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         )
         posts = rows.scalars().all()
 
@@ -201,7 +205,9 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
     lines = [f"{niche_icon} {tenant.tg_chat_id} — очередь ({total_str})"]
     for p in valid_posts:
         pause_icon = "⏸" if p.paused else ""
-        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
+        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(
+            p.status, "❓"
+        )
         tag = pause_icon if p.paused else status_icon
         title = (p.title or "—")[:50]
         extra = ""
@@ -212,18 +218,24 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
     kb = []
     for p in valid_posts:
         pause_icon = "⏸" if p.paused else ""
-        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(p.status, "❓")
+        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(
+            p.status, "❓"
+        )
         tag = pause_icon or status_icon
         title = (p.title or "—")[:40]
         badge = ""
         if p.status == "scheduled" and p.scheduled_at:
             badge = f" ⤵{p.scheduled_at.strftime('%H:%M')}"
-        kb.append([
-            InlineKeyboardButton(text=f"{tag} {title}{badge}", callback_data=f"queue:post:{p.id}"),
-            InlineKeyboardButton(text="🗑", callback_data=f"queue:del:{p.id}"),
-        ])
+        kb.append(
+            [
+                InlineKeyboardButton(text=f"{tag} {title}{badge}", callback_data=f"queue:post:{p.id}"),
+                InlineKeyboardButton(text="🗑", callback_data=f"queue:del:{p.id}"),
+            ]
+        )
 
-    action_row = [InlineKeyboardButton(text="🌐 Перевести все", callback_data=f"queue:retranslate_all:{tenant.tenant_id}")]
+    action_row = [
+        InlineKeyboardButton(text="🌐 Перевести все", callback_data=f"queue:retranslate_all:{tenant.tenant_id}")
+    ]
     kb.append(action_row)
 
     nav = []
@@ -268,10 +280,19 @@ async def queue_show_post(callback: CallbackQuery):
                 await callback.answer("Пост не найден")
                 return
 
-        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "published": "📤", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(post.status, "❓")
+        status_icon = {
+            "rewritten": "✅",
+            "rewritten_fallback": "⚠️",
+            "published": "📤",
+            "raw": "📝",
+            "scheduled": "⏰",
+            "draft": "📄",
+        }.get(post.status, "❓")
         pause_label = "⏸ Приостановлен" if post.paused else ""
         created = post.created_at.strftime("%d.%m.%Y %H:%M")
-        scheduled_label = f"\n⏰ Запланирован: {post.scheduled_at.strftime('%d.%m.%Y %H:%M')} UTC" if post.scheduled_at else ""
+        scheduled_label = (
+            f"\n⏰ Запланирован: {post.scheduled_at.strftime('%d.%m.%Y %H:%M')} UTC" if post.scheduled_at else ""
+        )
         preview = (post.content or "")[:300]
         text = (
             f"{status_icon} *{post.title or 'Без названия'}* {pause_label}\n"
@@ -280,20 +301,31 @@ async def queue_show_post(callback: CallbackQuery):
             f"📝 {preview}{'…' if len((post.content or '')) > 300 else ''}"
         )
         kb_rows = [
-            [InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"queue:preview:{post.id}"),
-             InlineKeyboardButton(text="📤 Опубликовать", callback_data=f"queue:publish:{post.id}")],
-            [InlineKeyboardButton(text="✏️ Заголовок", callback_data=f"queue:edit_title:{post.id}"),
-             InlineKeyboardButton(text="✏️ Текст", callback_data=f"queue:edit_content:{post.id}")],
-            [InlineKeyboardButton(text="⏰ Отложить", callback_data=f"queue:schedule:{post.id}"),
-             InlineKeyboardButton(text="⏸ Пауза" if not post.paused else "▶️ Возобновить", callback_data=f"queue:toggle:{post.id}")],
-            [InlineKeyboardButton(text="🔧 Починить", callback_data=f"queue:repair:{post.id}"),
-             InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}")],
+            [
+                InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"queue:preview:{post.id}"),
+                InlineKeyboardButton(text="📤 Опубликовать", callback_data=f"queue:publish:{post.id}"),
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Заголовок", callback_data=f"queue:edit_title:{post.id}"),
+                InlineKeyboardButton(text="✏️ Текст", callback_data=f"queue:edit_content:{post.id}"),
+            ],
+            [
+                InlineKeyboardButton(text="⏰ Отложить", callback_data=f"queue:schedule:{post.id}"),
+                InlineKeyboardButton(
+                    text="⏸ Пауза" if not post.paused else "▶️ Возобновить", callback_data=f"queue:toggle:{post.id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(text="🔧 Починить", callback_data=f"queue:repair:{post.id}"),
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}"),
+            ],
             [InlineKeyboardButton(text="🌐 Перевести", callback_data=f"queue:retranslate:{post.id}")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="queue:list")],
         ]
         await callback.answer()
-        await callback.message.edit_text(text, parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+        await callback.message.edit_text(
+            text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        )
     except Exception as e:
         logger.error("queue:post error: %s", e, exc_info=True)
         await callback.answer(f"❌ {e}", show_alert=True)
@@ -318,6 +350,7 @@ async def queue_preview_post(callback: CallbackQuery):
                 return
 
         from services.formatter import format_post
+
         formatted = format_post(post.title, post.content, post.link)
 
         await callback.answer()
@@ -343,9 +376,7 @@ async def queue_publish_post(callback: CallbackQuery):
         if not post:
             await callback.message.answer("Пост не найден.")
             return
-        tenant = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == post.tenant_id)
-        )
+        tenant = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == post.tenant_id))
         chat_id = tenant.tg_chat_id if tenant else None
 
     if not chat_id:
@@ -354,6 +385,7 @@ async def queue_publish_post(callback: CallbackQuery):
 
     await callback.message.answer("⏳ Публикую...")
     from services.telegram import _send_message_async, _send_photo_async
+
     text = strip_html((post.content or "")[:4096])
     try:
         if post.image:
@@ -436,10 +468,14 @@ async def queue_toggle_post(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("queue:del:"))
 async def queue_confirm_delete(callback: CallbackQuery):
     post_id = int(callback.data.split(":", 2)[2])
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"queue:deldone:{post_id}"),
-         InlineKeyboardButton(text="❌ Нет", callback_data=f"queue:post:{post_id}")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"queue:deldone:{post_id}"),
+                InlineKeyboardButton(text="❌ Нет", callback_data=f"queue:post:{post_id}"),
+            ],
+        ]
+    )
     await callback.answer()
     await callback.message.edit_text("🗑 Удалить пост навсегда?", reply_markup=kb)
 
@@ -472,7 +508,7 @@ async def queue_retranslate_post(callback: CallbackQuery):
         tenant_id = post.tenant_id
 
     try:
-        status = await rewrite_post(post_id, tenant_id, force=True)
+        await rewrite_post(post_id, tenant_id, force=True)
         await callback.answer("✅ Перевод завершён")
     except Exception as e:
         logger.error("retranslate error: %s", e, exc_info=True)
@@ -580,10 +616,14 @@ async def queue_schedule_start(callback: CallbackQuery, state: FSMContext):
     await state.update_data(schedule_post_id=post_id)
     await callback.answer()
     from aiogram.types import InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=label, callback_data=f"queue:sched_time:{val}:{post_id}")]
-        for label, val in TIME_OPTIONS
-    ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"queue:post:{post_id}")]])
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"queue:sched_time:{val}:{post_id}")]
+            for label, val in TIME_OPTIONS
+        ]
+        + [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"queue:post:{post_id}")]]
+    )
     await callback.message.answer("⏰ Через сколько опубликовать?", reply_markup=kb)
     await state.set_state(ScheduleStates.scheduling_time)
 
@@ -647,11 +687,13 @@ async def sched_add_start(callback: CallbackQuery, state: FSMContext):
     tenant_id = callback.data.split(":", 2)[2]
     await state.update_data(tenant_id=tenant_id)
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📅 Каждый день", callback_data="sched_day:-1")],
-        *[[InlineKeyboardButton(text=WEEKDAY_FULL[i], callback_data=f"sched_day:{i}")] for i in range(7)],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 Каждый день", callback_data="sched_day:-1")],
+            *[[InlineKeyboardButton(text=WEEKDAY_FULL[i], callback_data=f"sched_day:{i}")] for i in range(7)],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
+        ]
+    )
     await callback.message.answer("Выбери день недели:", reply_markup=kb)
 
 
@@ -660,9 +702,7 @@ async def sched_choose_day(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     day = int(callback.data.split(":", 1)[1])
     await state.update_data(day_of_week=None if day == -1 else day)
-    await callback.message.answer(
-        "Время первой публикации в UTC (формат ЧЧ:ММ, например 08:00):"
-    )
+    await callback.message.answer("Время первой публикации в UTC (формат ЧЧ:ММ, например 08:00):")
     await state.set_state(ScheduleStates.choosing_time)
 
 
@@ -677,10 +717,12 @@ async def sched_choose_time(message: Message, state: FSMContext):
         await message.answer("Время вне диапазона.")
         return
     await state.update_data(publish_time=t)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=label, callback_data=f"sched_int:{val}")]
-        for val, label in INTERVALS
-    ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")]])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"sched_int:{val}")] for val, label in INTERVALS
+        ]
+        + [[InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")]]
+    )
     await message.answer("Периодичность публикаций:", reply_markup=kb)
     await state.set_state(ScheduleStates.choosing_interval)
 
@@ -691,19 +733,19 @@ async def sched_choose_interval(callback: CallbackQuery, state: FSMContext):
     interval = int(callback.data.split(":", 1)[1])
 
     if interval == 0:
-        await callback.message.answer(
-            "Введи периодичность в минутах (например: 30, 90, 180):"
-        )
+        await callback.message.answer("Введи периодичность в минутах (например: 30, 90, 180):")
         await state.set_state(ScheduleStates.choosing_custom_interval)
         return
 
     await state.update_data(interval_minutes=interval)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📰 Новости", callback_data="sched_niche:news")],
-        [InlineKeyboardButton(text="📝 Блог", callback_data="sched_niche:blog")],
-        [InlineKeyboardButton(text="🛒 Магазин", callback_data="sched_niche:shop")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📰 Новости", callback_data="sched_niche:news")],
+            [InlineKeyboardButton(text="📝 Блог", callback_data="sched_niche:blog")],
+            [InlineKeyboardButton(text="🛒 Магазин", callback_data="sched_niche:shop")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
+        ]
+    )
     await callback.message.answer("Выбери тематику:", reply_markup=kb)
     await state.set_state(ScheduleStates.choosing_niche)
 
@@ -716,12 +758,14 @@ async def sched_choose_custom_interval(message: Message, state: FSMContext):
         return
     interval = int(raw)
     await state.update_data(interval_minutes=interval)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📰 Новости", callback_data="sched_niche:news")],
-        [InlineKeyboardButton(text="📝 Блог", callback_data="sched_niche:blog")],
-        [InlineKeyboardButton(text="🛒 Магазин", callback_data="sched_niche:shop")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📰 Новости", callback_data="sched_niche:news")],
+            [InlineKeyboardButton(text="📝 Блог", callback_data="sched_niche:blog")],
+            [InlineKeyboardButton(text="🛒 Магазин", callback_data="sched_niche:shop")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
+        ]
+    )
     await message.answer("Выбери тематику:", reply_markup=kb)
     await state.set_state(ScheduleStates.choosing_niche)
 
@@ -739,10 +783,14 @@ async def sched_choose_niche(callback: CallbackQuery, state: FSMContext):
         f"🔄 {_interval_label(data['interval_minutes'])}\n"
         f"🏷 {_niche_label(niche)}"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="sched:save"),
-         InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="sched:save"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="sched:cancel"),
+            ],
+        ]
+    )
     await state.update_data(niche=niche)
     await callback.message.answer(text, reply_markup=kb)
 
@@ -781,13 +829,17 @@ async def sched_del_list(callback: CallbackQuery):
     if not schedules:
         await callback.message.answer("Нет расписаний для удаления.")
         return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"{_day_label(s.day_of_week)} {s.publish_time} — {_niche_label(s.niche)}",
-            callback_data=f"sched:del:{s.id}",
-        )]
-        for s in schedules
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{_day_label(s.day_of_week)} {s.publish_time} — {_niche_label(s.niche)}",
+                    callback_data=f"sched:del:{s.id}",
+                )
+            ]
+            for s in schedules
+        ]
+    )
     await callback.message.answer("Выбери расписание для удаления:", reply_markup=kb)
 
 
@@ -812,20 +864,15 @@ async def cmd_stats(message: Message):
         return
 
     from models import Source
+
     for t in tenants:
         async with async_session_factory() as session:
-            total_posts = await session.scalar(
-                select(func.count(Post.id)).where(Post.tenant_id == t.tenant_id)
-            )
+            total_posts = await session.scalar(select(func.count(Post.id)).where(Post.tenant_id == t.tenant_id))
             published = await session.scalar(
-                select(func.count(Post.id)).where(
-                    Post.tenant_id == t.tenant_id, Post.status == "published"
-                )
+                select(func.count(Post.id)).where(Post.tenant_id == t.tenant_id, Post.status == "published")
             )
             failed = await session.scalar(
-                select(func.count(Post.id)).where(
-                    Post.tenant_id == t.tenant_id, Post.status == "failed"
-                )
+                select(func.count(Post.id)).where(Post.tenant_id == t.tenant_id, Post.status == "failed")
             )
             queued = await session.scalar(
                 select(func.count(Post.id)).where(
@@ -834,19 +881,13 @@ async def cmd_stats(message: Message):
                 )
             )
             raw = await session.scalar(
-                select(func.count(Post.id)).where(
-                    Post.tenant_id == t.tenant_id, Post.status == "raw"
-                )
+                select(func.count(Post.id)).where(Post.tenant_id == t.tenant_id, Post.status == "raw")
             )
             src_count = await session.scalar(
-                select(func.count(Source.id)).where(
-                    Source.tenant_id == t.tenant_id, Source.is_active == 1
-                )
+                select(func.count(Source.id)).where(Source.tenant_id == t.tenant_id, Source.is_active == 1)
             )
             sched_count = await session.scalar(
-                select(func.count(Schedule.id)).where(
-                    Schedule.tenant_id == t.tenant_id, Schedule.is_active
-                )
+                select(func.count(Schedule.id)).where(Schedule.tenant_id == t.tenant_id, Schedule.is_active)
             )
             ap = getattr(t, "auto_publish", True)
 

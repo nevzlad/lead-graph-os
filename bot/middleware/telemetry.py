@@ -34,9 +34,7 @@ class TelemetryMiddleware(BaseMiddleware):
 
         if user_id:
             async with async_session_factory() as session:
-                result = await session.execute(
-                    select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-                )
+                result = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
                 config = result.scalars().first()
                 if config:
                     data["tenant_id"] = config.tenant_id

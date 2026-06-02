@@ -40,9 +40,7 @@ class PostStates(StatesGroup):
 
 async def _get_tenant(user_id: str) -> TenantConfig | None:
     async with async_session_factory() as session:
-        return await session.scalar(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        return await session.scalar(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
 
 
 @router.message(Command("post"))
@@ -75,9 +73,7 @@ async def post_enter_content(message: Message, state: FSMContext):
         content = str(message.text).strip()
     await state.update_data(content=content)
     await state.set_state(PostStates.choosing_image)
-    await message.answer(
-        "Отправь изображение (необязательно) или /skip:"
-    )
+    await message.answer("Отправь изображение (необязательно) или /skip:")
 
 
 @router.message(PostStates.choosing_image, F.photo)
@@ -100,10 +96,11 @@ async def post_skip_image(message: Message, state: FSMContext):
 async def _ask_time(message: Message, state: FSMContext):
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=label, callback_data=f"post_time:{val}")]
-        for label, val in TIME_OPTIONS
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"post_time:{val}")] for label, val in TIME_OPTIONS
+        ]
+    )
     await state.set_state(PostStates.setting_time)
     await message.answer("Когда опубликовать?", reply_markup=kb)
 
@@ -149,7 +146,7 @@ async def _show_preview(message: Message, state: FSMContext):
     content = data.get("content")
     image = data.get("image")
     scheduled = data["scheduled_at"]
-    tenant_id = data["tenant_id"]
+    data["tenant_id"]
 
     formatted = format_post(title, content)
     when = "сейчас" if scheduled <= datetime.now(timezone.utc) else scheduled.strftime("%d.%m %H:%M UTC")
@@ -167,20 +164,23 @@ async def _show_preview(message: Message, state: FSMContext):
         )
 
     from services.validators import validate_all
+
     vresult = validate_all(
         content=content or "",
         original=None,
         target_lang=None,
     )
     if not vresult["is_valid"]:
-        await message.answer(f"⚠️ Проблемы с контентом:\n" + "\n".join(f"• {i}" for i in vresult["issues"]))
+        await message.answer("⚠️ Проблемы с контентом:\n" + "\n".join(f"• {i}" for i in vresult["issues"]))
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Опубликовать", callback_data="post:confirm")],
-        [InlineKeyboardButton(text="✏️ Изменить заголовок", callback_data="post:edit_title")],
-        [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="post:edit_content")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="post:cancel")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Опубликовать", callback_data="post:confirm")],
+            [InlineKeyboardButton(text="✏️ Изменить заголовок", callback_data="post:edit_title")],
+            [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="post:edit_content")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="post:cancel")],
+        ]
+    )
     await state.set_state(PostStates.confirming)
     await message.answer("Подтверди публикацию:", reply_markup=kb)
 
@@ -219,13 +219,16 @@ async def post_confirm(callback: CallbackQuery, state: FSMContext):
 
     # Validate before saving
     from services.validators import validate_all
+
     vresult = validate_all(
         content=content or "",
         original=None,
         target_lang=None,
     )
     if not vresult["is_valid"]:
-        await callback.message.answer(f"❌ Контент не прошёл проверку:\n" + "\n".join(f"• {i}" for i in vresult["issues"]))
+        await callback.message.answer(
+            "❌ Контент не прошёл проверку:\n" + "\n".join(f"• {i}" for i in vresult["issues"])
+        )
         return
 
     post = Post(
@@ -247,9 +250,7 @@ async def post_confirm(callback: CallbackQuery, state: FSMContext):
     if publish_now:
         await callback.message.answer("⏳ Публикую...")
         async with async_session_factory() as session:
-            tenant = await session.scalar(
-                select(TenantConfig).where(TenantConfig.tenant_id == data["tenant_id"])
-            )
+            tenant = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == data["tenant_id"]))
             chat_id = tenant.tg_chat_id if tenant else None
 
         if not chat_id:
@@ -276,6 +277,4 @@ async def post_confirm(callback: CallbackQuery, state: FSMContext):
                     await session.commit()
             await callback.message.answer(f"❌ Ошибка публикации: {e}")
     else:
-        await callback.message.answer(
-            f"✅ Пост запланирован на {scheduled.strftime('%d.%m.%Y %H:%M')} UTC"
-        )
+        await callback.message.answer(f"✅ Пост запланирован на {scheduled.strftime('%d.%m.%Y %H:%M')} UTC")

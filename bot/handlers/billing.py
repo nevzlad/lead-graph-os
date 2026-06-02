@@ -44,9 +44,7 @@ async def check_status(cb: CallbackQuery):
     user_id = str(cb.from_user.id)
 
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        result = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
         config = result.scalars().first()
         if not config:
             await cb.answer("Сначала пройди /setup", show_alert=True)

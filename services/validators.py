@@ -12,8 +12,8 @@ MARKDOWN_LIST_RE = re.compile(r"^(\s*[-*+]\s|\s*\d+\.\s)", re.MULTILINE)
 
 LANGDETECT_AVAILABLE = False
 try:
-    from langdetect import detect as langdetect_detect
     from langdetect import DetectorFactory, lang_detect_exception
+    from langdetect import detect as langdetect_detect
 
     DetectorFactory.seed = 0
     LANGDETECT_AVAILABLE = True
@@ -59,6 +59,7 @@ class ContentValidator:
         if not use_langdetect:
             try:
                 from services.language import detect_language
+
                 detected = detect_language(sample)
                 if detected != target_lang and target_lang != detected:
                     return False, f"wrong_language:{detected}"
@@ -106,7 +107,7 @@ class ContentValidator:
             if count != close_tags.get(tag, 0):
                 return False, f"unclosed_tag:{tag}"
         heading_count = len(MARKDOWN_HEADING_RE.findall(text))
-        list_count = len(MARKDOWN_LIST_RE.findall(text))
+        len(MARKDOWN_LIST_RE.findall(text))
         if heading_count > 10:
             return False, f"too_many_headings:{heading_count}"
         return True, None
@@ -128,7 +129,7 @@ class ContentValidator:
         cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
         if len(cleaned) < n:
             return Counter([cleaned])
-        return Counter(cleaned[i:i + n] for i in range(len(cleaned) - n + 1))
+        return Counter(cleaned[i : i + n] for i in range(len(cleaned) - n + 1))
 
 
 _validator = ContentValidator()
@@ -174,7 +175,7 @@ def _ngrams(text: str, n: int = 3) -> Counter:
     normalized = re.sub(r"\s+", " ", normalized).strip().lower()
     if len(normalized) < n:
         return Counter([normalized])
-    return Counter(normalized[i:i + n] for i in range(len(normalized) - n + 1))
+    return Counter(normalized[i : i + n] for i in range(len(normalized) - n + 1))
 
 
 def check_uniqueness(content: str, original: str, threshold: float | None = None) -> tuple[bool, str | None]:

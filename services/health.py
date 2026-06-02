@@ -34,12 +34,14 @@ async def check_db() -> bool:
 
 
 async def check_llm() -> bool:
-    from services.llm_router import get_all_providers, get_provider_health, is_circuit_open, record_success
+    from services.llm_router import get_all_providers, get_provider_health, record_success
+
     all_providers = get_all_providers()
     if not all_providers:
         return True
     ok = True
-    from services.llm_router import reenable_provider, get_disabled_providers
+    from services.llm_router import get_disabled_providers, reenable_provider
+
     disabled_before = get_disabled_providers()
     for p in settings.PROVIDERS:
         try:
@@ -50,6 +52,7 @@ async def check_llm() -> bool:
                     reenable_provider(p["name"])
             else:
                 from services.llm_router import record_error
+
                 record_error(p["name"])
                 ok = False
         except Exception as e:
@@ -65,13 +68,12 @@ async def check_llm() -> bool:
         health = get_provider_health()
         unhealthy = sum(1 for v in health.values() if not v)
         logger.warning("LLM degraded (%d/%d providers unhealthy)", unhealthy, len(health))
-        await _log_error("llm", "providers_degraded",
-                         f"{unhealthy}/{len(health)} unhealthy")
+        await _log_error("llm", "providers_degraded", f"{unhealthy}/{len(health)} unhealthy")
     return ok
 
 
 async def _check_provider(provider: dict) -> bool:
-    name = provider["name"]
+    provider["name"]
     ptype = provider["type"]
     loop = asyncio.get_running_loop()
 
@@ -80,9 +82,10 @@ async def _check_provider(provider: dict) -> bool:
             headers = {"Authorization": f"Bearer {provider['key']}"}
             url = f"https://api-inference.huggingface.co/models/{provider['model']}"
             resp = await loop.run_in_executor(
-                None, lambda: httpx.post(url, headers=headers,
-                                         json={"inputs": "ping", "parameters": {"max_new_tokens": 5}},
-                                         timeout=30)
+                None,
+                lambda: httpx.post(
+                    url, headers=headers, json={"inputs": "ping", "parameters": {"max_new_tokens": 5}}, timeout=30
+                ),
             )
             return resp.status_code == 200
 
@@ -91,27 +94,43 @@ async def _check_provider(provider: dict) -> bool:
             url = f"{base}/chat/completions"
             headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
             resp = await loop.run_in_executor(
-                None, lambda: httpx.post(url, headers=headers,
-                                         json={"model": provider["model"], "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5},
-                                         timeout=30)
+                None,
+                lambda: httpx.post(
+                    url,
+                    headers=headers,
+                    json={
+                        "model": provider["model"],
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 5,
+                    },
+                    timeout=30,
+                ),
             )
             return resp.status_code == 200
 
         elif ptype == "gemini":
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{provider['model']}:generateContent?key={provider['key']}"
             resp = await loop.run_in_executor(
-                None, lambda: httpx.post(url, headers={"Content-Type": "application/json"},
-                                         json={"contents": [{"parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 5}},
-                                         timeout=30)
+                None,
+                lambda: httpx.post(
+                    url,
+                    headers={"Content-Type": "application/json"},
+                    json={"contents": [{"parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 5}},
+                    timeout=30,
+                ),
             )
             return resp.status_code == 200
 
         elif ptype == "cohere":
             headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
             resp = await loop.run_in_executor(
-                None, lambda: httpx.post("https://api.cohere.com/v2/chat", headers=headers,
-                                         json={"model": provider["model"], "message": "ping", "max_tokens": 5},
-                                         timeout=30)
+                None,
+                lambda: httpx.post(
+                    "https://api.cohere.com/v2/chat",
+                    headers=headers,
+                    json={"model": provider["model"], "message": "ping", "max_tokens": 5},
+                    timeout=30,
+                ),
             )
             return resp.status_code == 200
     except Exception:
@@ -122,6 +141,7 @@ async def _check_provider(provider: dict) -> bool:
 async def check_tg_bot() -> bool:
     try:
         from aiogram import Bot
+
         async with Bot(token=settings.TG_BOT_TOKEN) as bot:
             me = await bot.get_me()
         ok = bool(me and me.username)
@@ -145,16 +165,17 @@ async def check_tg_bot() -> bool:
 async def check_dead_sources() -> int:
     recovered = 0
     async with async_session_factory() as session:
-        rows = await session.execute(
-            select(Source).where(Source.is_active == 0)
-        )
+        rows = await session.execute(select(Source).where(Source.is_active == 0))
         for src in rows.scalars().all():
             errors = await session.execute(
-                select(ServiceError).where(
+                select(ServiceError)
+                .where(
                     ServiceError.service_name == "rss",
                     ServiceError.tenant_id == src.tenant_id,
-                    ServiceError.resolved == False,
-                ).order_by(ServiceError.created_at.desc()).limit(3)
+                    not ServiceError.resolved,
+                )
+                .order_by(ServiceError.created_at.desc())
+                .limit(3)
             )
             err_list = errors.scalars().all()
             if not err_list:
@@ -184,7 +205,7 @@ async def _resolve_errors(service: str):
         rows = await session.execute(
             select(ServiceError).where(
                 ServiceError.service_name == service,
-                ServiceError.resolved == False,
+                not ServiceError.resolved,
             )
         )
         for err in rows.scalars().all():

@@ -33,9 +33,7 @@ async def process_niche_change(cb: CallbackQuery):
     user_id = str(cb.from_user.id)
 
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        result = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
         config = result.scalars().first()
         if not config:
             await cb.answer("Сначала пройди /setup", show_alert=True)
@@ -46,8 +44,6 @@ async def process_niche_change(cb: CallbackQuery):
 
     await cb.answer()
     await cb.message.edit_text(
-        f"Шаблон изменён на: {niche}.\n"
-        f"Tenant: {tenant_id}\n"
-        f"Новые посты будут генерироваться в этом стиле."
+        f"Шаблон изменён на: {niche}.\nTenant: {tenant_id}\nНовые посты будут генерироваться в этом стиле."
     )
     logger.info(f"Tenant {tenant_id}: template changed to {niche}")

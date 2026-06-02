@@ -56,9 +56,7 @@ CURATED_SOURCES = {
 
 async def _get_user_tenants(user_id: str):
     async with async_session_factory() as session:
-        rows = await session.execute(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        rows = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
         return rows.scalars().all()
 
 
@@ -107,10 +105,14 @@ async def cmd_find(message: Message):
         kb_rows = []
         feeds = CURATED_SOURCES.get(niche, CURATED_SOURCES["news"])["feeds"]
         for i, (feed_title, feed_url) in enumerate(feeds):
-            kb_rows.append([InlineKeyboardButton(
-                text=f"➕ {feed_title}",
-                callback_data=f"find:add:{t.tenant_id}:{i}",
-            )])
+            kb_rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"➕ {feed_title}",
+                        callback_data=f"find:add:{t.tenant_id}:{i}",
+                    )
+                ]
+            )
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
         await message.answer(
             f"Поиск RSS для ниши «{niche}»:",
@@ -122,10 +124,14 @@ async def cmd_find(message: Message):
     kb_rows = []
     for t in tenants:
         niche_icon = {"news": "📰", "blog": "📝", "shop": "🛒"}.get(t.niche, "📄")
-        kb_rows.append([InlineKeyboardButton(
-            text=f"{niche_icon} {t.tg_chat_id}",
-            callback_data=f"find:list:{t.tenant_id}",
-        )])
+        kb_rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{niche_icon} {t.tg_chat_id}",
+                    callback_data=f"find:list:{t.tenant_id}",
+                )
+            ]
+        )
     await message.answer(
         "Выбери канал для поиска источников:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
@@ -137,9 +143,7 @@ async def find_list(callback: CallbackQuery):
     await callback.answer()
     tenant_id = callback.data.split(":", 2)[2]
     async with async_session_factory() as session:
-        tenant = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-        )
+        tenant = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
         if not tenant:
             await callback.message.answer("Канал не найден.")
             return
@@ -149,10 +153,14 @@ async def find_list(callback: CallbackQuery):
     for i, (feed_title, feed_url) in enumerate(feeds):
         exists = await _source_exists(tenant_id, feed_url)
         prefix = "✅" if exists else "➕"
-        kb_rows.append([InlineKeyboardButton(
-            text=f"{prefix} {feed_title}",
-            callback_data=f"find:add:{tenant_id}:{i}",
-        )])
+        kb_rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{prefix} {feed_title}",
+                    callback_data=f"find:add:{tenant_id}:{i}",
+                )
+            ]
+        )
     await callback.message.edit_text(
         f"Рекомендованные RSS для ниши «{tenant.niche}»:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
@@ -167,9 +175,7 @@ async def find_add(callback: CallbackQuery):
     feed_index = int(parts[3])
 
     async with async_session_factory() as session:
-        tenant = await session.scalar(
-            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
-        )
+        tenant = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
         if not tenant:
             await callback.message.answer("Канал не найден.")
             return
@@ -187,7 +193,9 @@ async def find_add(callback: CallbackQuery):
     else:
         await callback.message.answer(f"ℹ️ «{feed_title}» уже есть в твоих источниках.")
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 К списку", callback_data=f"find:list:{tenant_id}")],
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К списку", callback_data=f"find:list:{tenant_id}")],
+        ]
+    )
     await callback.message.answer("Что дальше?", reply_markup=kb)

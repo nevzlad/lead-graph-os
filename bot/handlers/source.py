@@ -23,31 +23,33 @@ class AddSourceStates(StatesGroup):
 def _sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
     kb = []
     for s in sources:
-        kb.append([
-            InlineKeyboardButton(
-                text=f"{'✅' if s.is_active else '❌'} {s.name[:20]}",
-                callback_data=f"src:toggle:{s.id}",
-            ),
-            InlineKeyboardButton(text="🗑", callback_data=f"src:del:{s.id}"),
-        ])
+        kb.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{'✅' if s.is_active else '❌'} {s.name[:20]}",
+                    callback_data=f"src:toggle:{s.id}",
+                ),
+                InlineKeyboardButton(text="🗑", callback_data=f"src:del:{s.id}"),
+            ]
+        )
     kb.append([InlineKeyboardButton(text="➕ Добавить источник", callback_data="src:add")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
 async def _get_tenant(user_id: str) -> TenantConfig | None:
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
-        )
+        result = await session.execute(select(TenantConfig).where(TenantConfig.tg_user_id == user_id))
         return result.scalars().first()
 
 
 async def _get_sources(tenant_id: str) -> list[Source]:
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Source).where(
+            select(Source)
+            .where(
                 Source.tenant_id == tenant_id,
-            ).order_by(Source.id)
+            )
+            .order_by(Source.id)
         )
         return result.scalars().all()
 
@@ -60,13 +62,16 @@ async def cmd_ping(message: Message):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Настройка канала", callback_data="help:setup")],
-        [InlineKeyboardButton(text="🌐 Ниша шаблона", callback_data="help:template")],
-        [InlineKeyboardButton(text="📡 RSS-источники", callback_data="help:source")],
-        [InlineKeyboardButton(text="💳 Биллинг", callback_data="help:billing")],
-        [InlineKeyboardButton(text="📊 Телеметрия", callback_data="help:telemetry")],
-    ])
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Настройка канала", callback_data="help:setup")],
+            [InlineKeyboardButton(text="🌐 Ниша шаблона", callback_data="help:template")],
+            [InlineKeyboardButton(text="📡 RSS-источники", callback_data="help:source")],
+            [InlineKeyboardButton(text="💳 Биллинг", callback_data="help:billing")],
+            [InlineKeyboardButton(text="📊 Телеметрия", callback_data="help:telemetry")],
+        ]
+    )
     await message.answer(
         "🤖 *Lead-Graph OS* — бот для автопостинга в Telegram\n\n"
         "Доступные команды:\n"
@@ -148,9 +153,7 @@ async def add_source_start(cb: CallbackQuery, state: FSMContext):
 
     await state.update_data(tenant_id=tenant.tenant_id)
     await cb.answer()
-    await cb.message.edit_text(
-        "Отправь URL RSS-ленты (например, https://example.com/rss):"
-    )
+    await cb.message.edit_text("Отправь URL RSS-ленты (например, https://example.com/rss):")
     await state.set_state(AddSourceStates.waiting_url)
 
 
@@ -167,15 +170,11 @@ async def add_source_url(message: Message, state: FSMContext):
             )
         )
     if exists:
-        await message.answer(
-            "❌ Этот URL уже добавлен. Отправь другой URL RSS-ленты:"
-        )
+        await message.answer("❌ Этот URL уже добавлен. Отправь другой URL RSS-ленты:")
         return
 
     await state.update_data(url=url)
-    await message.answer(
-        "Отправь название источника (например, «Habr» или любой текст):"
-    )
+    await message.answer("Отправь название источника (например, «Habr» или любой текст):")
     await state.set_state(AddSourceStates.waiting_name)
 
 
@@ -264,6 +263,4 @@ async def delete_source(cb: CallbackQuery):
             reply_markup=_sources_keyboard(sources),
         )
     else:
-        await cb.message.edit_text(
-            "Нет добавленных источников.\nНажми /source, чтобы добавить RSS-ленту."
-        )
+        await cb.message.edit_text("Нет добавленных источников.\nНажми /source, чтобы добавить RSS-ленту.")

@@ -34,9 +34,7 @@ async def collect_source(source_id: int, tenant_id: str) -> int:
             return 0
 
         loop = asyncio.get_running_loop()
-        raw_items = await loop.run_in_executor(
-            None, lambda: _rss_collector.fetch(source.url, source.config or {})
-        )
+        raw_items = await loop.run_in_executor(None, lambda: _rss_collector.fetch(source.url, source.config or {}))
 
         inserted = 0
         for item in raw_items:
@@ -98,9 +96,7 @@ async def publish_post(post_id: int, tenant_id: str, chat_id: str) -> str:
     except Exception as e:
         logger.error(f"Publish failed for post {post_id}: {e}")
         async with async_session_factory() as session:
-            reresult = await session.execute(
-                select(Post).where(Post.id == post_id, Post.tenant_id == tenant_id)
-            )
+            reresult = await session.execute(select(Post).where(Post.id == post_id, Post.tenant_id == tenant_id))
             post = reresult.scalar_one_or_none()
             if post:
                 post.status = "failed"
@@ -109,9 +105,7 @@ async def publish_post(post_id: int, tenant_id: str, chat_id: str) -> str:
         return "failed"
 
     async with async_session_factory() as session:
-        reresult = await session.execute(
-            select(Post).where(Post.id == post_id, Post.tenant_id == tenant_id)
-        )
+        reresult = await session.execute(select(Post).where(Post.id == post_id, Post.tenant_id == tenant_id))
         post = reresult.scalar_one_or_none()
         if post:
             post.external_id = external_id
@@ -151,10 +145,13 @@ async def _should_publish_now(tenant_id: str) -> list[Schedule]:
     # Only guard against double-publish within the same 5-min window
     async with async_session_factory() as session:
         last_pub = await session.scalar(
-            select(Post.scheduled_at).where(
+            select(Post.scheduled_at)
+            .where(
                 Post.tenant_id == tenant_id,
                 Post.status == "published",
-            ).order_by(Post.scheduled_at.desc()).limit(1)
+            )
+            .order_by(Post.scheduled_at.desc())
+            .limit(1)
         )
     if last_pub:
         since_last = (now - last_pub).total_seconds()
@@ -168,7 +165,7 @@ async def _publish_one(tenant_id: str, chat_id: str, niche: str | None = None) -
         q = select(Post).where(
             Post.tenant_id == tenant_id,
             Post.status.in_(["rewritten", "rewritten_fallback"]),
-            Post.paused == False,
+            not Post.paused,
         )
         if niche:
             q = q.where(Post.title.ilike(f"%{niche}%"))
@@ -221,12 +218,15 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
     async with async_session_factory() as session:
         now = datetime.now(timezone.utc)
         due = await session.execute(
-            select(Post).where(
+            select(Post)
+            .where(
                 Post.tenant_id == tenant_id,
                 Post.status == "scheduled",
                 Post.scheduled_at <= now,
-                Post.paused == False,
-            ).order_by(Post.scheduled_at).limit(5)
+                not Post.paused,
+            )
+            .order_by(Post.scheduled_at)
+            .limit(5)
         )
         for post in due.scalars().all():
             status = await publish_post(post.id, tenant_id, chat_id)
@@ -234,9 +234,7 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
                 counts["published"] += 1
 
     async with async_session_factory() as session:
-        tc = await session.scalar(
-            select(TenantConfig.auto_publish).where(TenantConfig.tenant_id == tenant_id)
-        )
+        tc = await session.scalar(select(TenantConfig.auto_publish).where(TenantConfig.tenant_id == tenant_id))
         auto = tc if tc is not None else True
 
     if not auto:
@@ -261,9 +259,7 @@ async def pipeline_loop():
     while True:
         try:
             async with async_session_factory() as session:
-                tenants = await session.execute(
-                    select(TenantConfig.tenant_id, TenantConfig.tg_chat_id)
-                )
+                tenants = await session.execute(select(TenantConfig.tenant_id, TenantConfig.tg_chat_id))
                 all_tenants = tenants.all()
 
             for tenant_id, chat_id in all_tenants:

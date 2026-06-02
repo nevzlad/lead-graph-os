@@ -1,7 +1,5 @@
 import logging
 
-from config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -11,4 +9,5 @@ class LLMClient:
             return {"content": text, "status": "fallback"}
 
         from services.llm_router import route
+
         return route(tenant_id, niche, text, target_lang)

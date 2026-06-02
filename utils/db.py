@@ -26,9 +26,7 @@ async_engine = create_async_engine(
     **_engine_kwargs,
 )
 
-async_session_factory = async_sessionmaker(
-    async_engine, class_=AsyncSession, expire_on_commit=False
-)
+async_session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
 _sync_db_url = settings.DATABASE_URL
 if _sync_db_url.startswith("postgresql+asyncpg://"):
@@ -51,9 +49,7 @@ sync_engine = create_engine(
     connect_args=_sync_connect_args if _sync_connect_args else {},
 )
 
-sync_session_factory = sessionmaker(
-    sync_engine, class_=Session, expire_on_commit=False
-)
+sync_session_factory = sessionmaker(sync_engine, class_=Session, expire_on_commit=False)
 
 engine = async_engine
 

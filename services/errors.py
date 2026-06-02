@@ -1,5 +1,4 @@
 import logging
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -17,22 +16,22 @@ async def analyze_and_fix():
     async with async_session_factory() as session:
         # Group errors by service
         rows = await session.execute(
-            select(ServiceError.service_name, func.count(ServiceError.id)).where(
+            select(ServiceError.service_name, func.count(ServiceError.id))
+            .where(
                 ServiceError.created_at >= cutoff,
-                ServiceError.resolved == False,
-            ).group_by(ServiceError.service_name)
+                not ServiceError.resolved,
+            )
+            .group_by(ServiceError.service_name)
         )
         error_counts = {r[0]: r[1] for r in rows.all()}
 
         # Auto-disable sources with >5 consecutive errors
-        src_rows = await session.execute(
-            select(Source).where(Source.is_active == 1)
-        )
+        src_rows = await session.execute(select(Source).where(Source.is_active == 1))
         for src in src_rows.scalars().all():
             err_count = await session.scalar(
                 select(func.count(ServiceError.id)).where(
                     ServiceError.service_name == "rss",
-                    ServiceError.resolved == False,
+                    not ServiceError.resolved,
                     ServiceError.created_at >= cutoff,
                 )
             )

@@ -75,11 +75,6 @@ class BigDataAnalyzer:
             posts = (await session.execute(stmt)).scalars().all()
             row_count = len(posts)
 
-        filename = (
-            f"/tmp/bigdata_export_{tenant_id[:8]}_"
-            f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.{fmt}"
-        )
-        logger.info(
-            f"Tenant {tenant_id}: exported {row_count} rows to {filename} ({fmt})"
-        )
+        filename = f"/tmp/bigdata_export_{tenant_id[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.{fmt}"
+        logger.info(f"Tenant {tenant_id}: exported {row_count} rows to {filename} ({fmt})")
         return filename
