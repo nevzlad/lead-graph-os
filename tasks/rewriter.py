@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -134,7 +135,11 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
     router = LLMRouter()
     validator = ContentValidator()
 
-    result = router.rewrite_with_failover(tenant_id, raw_content, target_lang)
+    loop = asyncio.get_running_loop()
+    result = await asyncio.wait_for(
+        loop.run_in_executor(None, router.rewrite_with_failover, tenant_id, raw_content, target_lang),
+        timeout=90,
+    )
     rewritten = result.get("content", raw_content)
     provider = result.get("provider")
 
@@ -143,7 +148,10 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
 
     if not is_valid:
         logger.info("Post %d: validation failed %s, retry router", post_id, validation["errors"])
-        result2 = router.rewrite_with_failover(tenant_id, raw_content, target_lang)
+        result2 = await asyncio.wait_for(
+            loop.run_in_executor(None, router.rewrite_with_failover, tenant_id, raw_content, target_lang),
+            timeout=90,
+        )
         rewritten2 = result2.get("content", raw_content)
         provider2 = result2.get("provider")
 

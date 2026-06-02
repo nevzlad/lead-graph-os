@@ -94,7 +94,7 @@ class Settings:
     TRIAL_DAYS: int = int(os.getenv("TRIAL_DAYS", "7"))
 
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
-    LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "30"))
+    LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "15"))
     LLM_CB_ERROR_THRESHOLD: int = int(os.getenv("LLM_CB_ERROR_THRESHOLD", "3"))
     LLM_CB_RECOVERY_SECONDS: int = int(os.getenv("LLM_CB_RECOVERY_SECONDS", "300"))
     LLM_REDIS_TTL: int = int(os.getenv("LLM_REDIS_TTL", "86400"))
