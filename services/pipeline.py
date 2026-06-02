@@ -3,11 +3,11 @@ import logging
 import random
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from collectors.rss import RSSCollector
 from config import settings
-from models import Post, Source, TenantConfig
+from models import Post, Schedule, Source, TenantConfig
 from services.llm import LLMClient
 from services.telegram import _send_message_async
 from utils.db import async_session_factory
@@ -168,6 +168,48 @@ async def publish_post(post_id: int, tenant_id: str, chat_id: str) -> str:
     return "published"
 
 
+async def _should_publish_now(tenant_id: str) -> list[Schedule]:
+    now = datetime.now(timezone.utc)
+    current_minutes = now.hour * 60 + now.minute
+    matches = []
+    async with async_session_factory() as session:
+        rows = await session.execute(
+            select(Schedule).where(
+                Schedule.tenant_id == tenant_id,
+                Schedule.is_active == True,
+            )
+        )
+        for s in rows.scalars().all():
+            if s.day_of_week is not None and s.day_of_week != now.weekday():
+                continue
+            sm = int(s.publish_time[:2]) * 60 + int(s.publish_time[3:])
+            if abs(sm - current_minutes) <= 5:
+                matches.append(s)
+    return matches
+
+
+async def _publish_one(tenant_id: str, chat_id: str, niche: str | None = None) -> int:
+    async with async_session_factory() as session:
+        q = select(Post).where(
+            Post.tenant_id == tenant_id,
+            Post.status.in_(["rewritten", "rewritten_fallback"]),
+        )
+        if niche:
+            q = q.where(Post.title.ilike(f"%{niche}%"))
+        q = q.order_by(Post.created_at).limit(1)
+        row = await session.execute(q)
+        post = row.scalar_one_or_none()
+
+    if not post and niche:
+        return await _publish_one(tenant_id, chat_id, None)
+
+    if not post:
+        return 0
+
+    status = await publish_post(post.id, tenant_id, chat_id)
+    return 1 if status == "published" else 0
+
+
 async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
     counts = {"collected": 0, "rewritten": 0, "published": 0}
 
@@ -196,20 +238,16 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
             if status in ("rewritten", "rewritten_fallback"):
                 counts["rewritten"] += 1
 
+    schedules = await _should_publish_now(tenant_id)
+    if not schedules:
+        return counts
+
     jitter = random.uniform(settings.PUBLISHER_JITTER_MIN, settings.PUBLISHER_JITTER_MAX)
     await asyncio.sleep(jitter)
 
-    async with async_session_factory() as session:
-        ready_posts = await session.execute(
-            select(Post).where(
-                Post.tenant_id == tenant_id,
-                Post.status.in_(["rewritten", "rewritten_fallback"]),
-            )
-        )
-        for post in ready_posts.scalars().all():
-            status = await publish_post(post.id, tenant_id, chat_id)
-            if status == "published":
-                counts["published"] += 1
+    for s in schedules:
+        published = await _publish_one(tenant_id, chat_id, s.niche)
+        counts["published"] += published
 
     return counts
 

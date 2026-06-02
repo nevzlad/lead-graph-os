@@ -71,3 +71,12 @@ class TelemetryEvent(Base, TenantMixin):
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     __table_args__ = (Index("ix_telemetry_tenant_type", "tenant_id", "event_type"),)
+
+
+class Schedule(Base, TenantMixin):
+    __tablename__ = "schedules"
+    day_of_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    publish_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    niche: Mapped[str] = mapped_column(String(30), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    __table_args__ = (Index("ix_schedules_tenant", "tenant_id"),)

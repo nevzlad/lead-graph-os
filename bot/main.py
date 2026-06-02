@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from bot.handlers import billing, setup, source, template
+from bot.handlers import billing, schedule, setup, source, template
 from bot.middleware.telemetry import TelemetryMiddleware
 from config import settings
 
@@ -25,6 +25,7 @@ async def main() -> None:
     dp.include_router(template.router)
     dp.include_router(source.router)
     dp.include_router(billing.router)
+    dp.include_router(schedule.router)
 
     @dp.startup()
     async def on_startup() -> None:
@@ -39,6 +40,8 @@ async def main() -> None:
             BotCommand(command="setup", description="Настроить канал"),
             BotCommand(command="template", description="Сменить нишу"),
             BotCommand(command="source", description="Управлять RSS"),
+            BotCommand(command="schedule", description="Расписание публикаций"),
+            BotCommand(command="queue", description="Очередь постов"),
             BotCommand(command="billing", description="Тарифы"),
             BotCommand(command="telemetry", description="Телеметрия + бонус"),
             BotCommand(command="help", description="Помощь"),
