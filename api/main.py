@@ -168,16 +168,16 @@ async def debug_process_queue():
         if not all_tenants:
             return {"error": "no_tenants"}
 
-        results = {}
-        for tenant_id, chat_id in all_tenants:
-            try:
-                counts = await run_tenant_pipeline(tenant_id, chat_id)
-                results[tenant_id] = counts
-            except Exception as inner:
-                logger.error("pipeline error for %s: %s", tenant_id, inner, exc_info=True)
-                results[tenant_id] = {"error": str(inner)[:500], "type": type(inner).__name__}
+        async def _run_all():
+            for tenant_id, chat_id in all_tenants:
+                try:
+                    counts = await run_tenant_pipeline(tenant_id, chat_id)
+                    logger.info("process-queue tenant %s done: %s", tenant_id, counts)
+                except Exception as inner:
+                    logger.error("pipeline error for %s: %s", tenant_id, inner, exc_info=True)
 
-        return {"processed": results}
+        task = asyncio.create_task(_run_all())
+        return {"status": "started", "tenants": [t[0] for t in all_tenants], "task": str(id(task))}
     except Exception as e:
         logger.error("process-queue error: %s", e, exc_info=True)
         return {"error": str(e)[:500], "type": type(e).__name__}
