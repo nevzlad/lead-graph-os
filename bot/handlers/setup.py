@@ -59,16 +59,41 @@ async def process_chat_id(message: Message, state: FSMContext):
 
 @router.message(SetupStates.waiting_niche, F.text.in_(NICHE_BUTTONS))
 async def process_niche(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
     data = await state.get_data()
     niche = NICHE_MAP.get(message.text, "news")
-    tenant_id = str(uuid.uuid4())
-    trial_end = datetime.now(timezone.utc) + timedelta(days=settings.TRIAL_DAYS)
     now = datetime.now(timezone.utc)
 
     async with async_session_factory() as session:
+        existing = await session.scalar(
+            select(TenantConfig.tenant_id).where(TenantConfig.tg_user_id == user_id)
+        )
+        if existing:
+            result = await session.execute(
+                select(TenantConfig).where(TenantConfig.tenant_id == existing)
+            )
+            config = result.scalar_one()
+            config.niche = niche
+            config.updated_at = now
+            await session.commit()
+            tenant_id = config.tenant_id
+            trial_end = config.created_at + timedelta(days=settings.TRIAL_DAYS)
+            await state.clear()
+            await message.answer(
+                f"✅ Ниша обновлена на «{niche}»!\n"
+                f"Твой Tenant ID: `{tenant_id}`\n"
+                f"Trial активен до {trial_end.strftime('%d.%m.%Y %H:%M')}",
+                parse_mode="Markdown",
+            )
+            logger.info(f"Tenant {tenant_id}: niche updated to {niche}")
+            return
+
+        tenant_id = str(uuid.uuid4())
+        trial_end = now + timedelta(days=settings.TRIAL_DAYS)
+
         new_cfg = TenantConfig(
             tenant_id=tenant_id,
-            tg_user_id=str(message.from_user.id),
+            tg_user_id=user_id,
             tg_chat_id=data["chat_id"],
             niche=niche,
             billing_status="trial",
@@ -110,7 +135,7 @@ async def cmd_telemetry(message: Message):
         result = await session.execute(
             select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
         )
-        config = result.scalar_one_or_none()
+        config = result.scalars().first()
         if not config:
             await message.answer("Сначала пройди онбординг: /setup")
             return

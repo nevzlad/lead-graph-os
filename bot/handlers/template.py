@@ -36,7 +36,7 @@ async def process_niche_change(cb: CallbackQuery):
         result = await session.execute(
             select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
         )
-        config = result.scalar_one_or_none()
+        config = result.scalars().first()
         if not config:
             await cb.answer("Сначала пройди /setup", show_alert=True)
             return

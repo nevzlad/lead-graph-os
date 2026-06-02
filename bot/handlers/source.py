@@ -38,7 +38,7 @@ async def _get_tenant(user_id: str) -> TenantConfig | None:
         result = await session.execute(
             select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
 
 async def _get_sources(tenant_id: str) -> list[Source]:

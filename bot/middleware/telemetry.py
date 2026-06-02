@@ -37,7 +37,7 @@ class TelemetryMiddleware(BaseMiddleware):
                 result = await session.execute(
                     select(TenantConfig).where(TenantConfig.tg_user_id == user_id)
                 )
-                config = result.scalar_one_or_none()
+                config = result.scalars().first()
                 if config:
                     data["tenant_id"] = config.tenant_id
                     if config.telemetry_opt_in:
