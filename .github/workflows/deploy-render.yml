@@ -77,22 +77,30 @@ jobs:
           for i in $(seq 1 10); do
             echo "  check $i/10..."
             sleep 30
-            STATUS=$(curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
-              "https://api.render.com/v1/services/$SVC_ID/deploys?limit=1" | python3 -c "
+            INFO=$(curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$SVC_ID/deploys?limit=1")
+            DID=$(echo "$INFO" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          if not d: print(''); exit(0)
+          dep=d[0].get('deploy',d[0])
+          print(dep.get('id',''))
+          ")
+            STATUS=$(echo "$INFO" | python3 -c "
           import json,sys
           d=json.load(sys.stdin)
           if not d: print('no_deploys'); exit(0)
           dep=d[0].get('deploy',d[0])
-          s=dep.get('status','?')
-          print(s)
+          print(dep.get('status','?'))
           ")
-            echo "  status: $STATUS"
+            echo "  deploy $DID: $STATUS"
             case "$STATUS" in
               live) echo "LIVE!"; exit 0 ;;
               build_failed|update_failed|deactivated)
                 echo "FAILED: $STATUS"
+                echo "=== Deploy logs ==="
                 curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
-                  "https://api.render.com/v1/services/$SVC_ID/deploys?limit=1"
+                  "https://api.render.com/v1/services/$SVC_ID/deploys/$DID/logs" 2>/dev/null || echo "(logs not available)"
                 exit 1 ;;
             esac
           done
