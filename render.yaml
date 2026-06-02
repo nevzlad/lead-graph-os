@@ -19,5 +19,7 @@ services:
         sync: false
       - key: TG_BOT_TOKEN
         sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
       - key: ONBOARDING_BOT_TOKEN
         sync: false
