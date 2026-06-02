@@ -158,21 +158,29 @@ async def debug_process_queue():
     from models import TenantConfig
     from utils.db import async_session_factory
 
-    async with async_session_factory() as session:
-        tenants = await session.execute(
-            select(TenantConfig.tenant_id, TenantConfig.tg_chat_id)
-        )
-        all_tenants = tenants.all()
+    try:
+        async with async_session_factory() as session:
+            tenants = await session.execute(
+                select(TenantConfig.tenant_id, TenantConfig.tg_chat_id)
+            )
+            all_tenants = tenants.all()
 
-    if not all_tenants:
-        return {"error": "no_tenants"}
+        if not all_tenants:
+            return {"error": "no_tenants"}
 
-    results = {}
-    for tenant_id, chat_id in all_tenants:
-        counts = await run_tenant_pipeline(tenant_id, chat_id)
-        results[tenant_id] = counts
+        results = {}
+        for tenant_id, chat_id in all_tenants:
+            try:
+                counts = await run_tenant_pipeline(tenant_id, chat_id)
+                results[tenant_id] = counts
+            except Exception as inner:
+                logger.error("pipeline error for %s: %s", tenant_id, inner, exc_info=True)
+                results[tenant_id] = {"error": str(inner)[:500], "type": type(inner).__name__}
 
-    return {"processed": results}
+        return {"processed": results}
+    except Exception as e:
+        logger.error("process-queue error: %s", e, exc_info=True)
+        return {"error": str(e)[:500], "type": type(e).__name__}
 
 
 @app.get("/debug/tenants")
