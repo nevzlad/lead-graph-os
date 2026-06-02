@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 from aiogram.types.error_event import ErrorEvent
 
-from bot.handlers import billing, find, post, schedule, setup, source, template
+from bot.handlers import billing, find, language, post, schedule, setup, source, template
 from bot.middleware.telemetry import TelemetryMiddleware
 from config import settings
 
@@ -37,6 +37,8 @@ async def main() -> None:
     logger.info("post.router included")
     dp.include_router(schedule.router)
     logger.info("schedule.router included")
+    dp.include_router(language.router)
+    logger.info("language.router included")
 
     @dp.startup()
     async def on_startup() -> None:
@@ -60,6 +62,7 @@ async def main() -> None:
             BotCommand(command="post", description="Создать пост вручную"),
             BotCommand(command="stats", description="Статистика и аналитика"),
             BotCommand(command="billing", description="Тарифы"),
+            BotCommand(command="language", description="Язык постов"),
             BotCommand(command="telemetry", description="Телеметрия + бонус"),
             BotCommand(command="help", description="Помощь"),
         ])

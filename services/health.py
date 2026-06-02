@@ -33,33 +33,75 @@ async def check_db() -> bool:
 
 
 async def check_llm() -> bool:
-    try:
-        import requests
-        if not settings.HF_API_KEY:
-            return True
-        headers = {"Authorization": f"Bearer {settings.HF_API_KEY}"}
-        url = f"https://api-inference.huggingface.co/models/{settings.LLM_MODEL}"
+    from services.llm import PROVIDERS, PROVIDER_HEALTH
+    if not PROVIDERS:
+        return True
+    ok = True
+    for provider in PROVIDERS:
+        try:
+            p_ok = await _check_provider(provider)
+            PROVIDER_HEALTH[provider["name"]] = p_ok
+            if not p_ok:
+                ok = False
+        except Exception as e:
+            PROVIDER_HEALTH[provider["name"]] = False
+            ok = False
+            logger.error("Provider %s health check failed: %s", provider["name"], e)
+    global _llm_degraded
+    if ok and _llm_degraded:
+        _llm_degraded = False
+        logger.info("LLM recovered (all providers healthy)")
+        await _resolve_errors("llm")
+    elif not ok and not _llm_degraded:
+        _llm_degraded = True
+        logger.warning("LLM degraded (%d/%d providers unhealthy)",
+                       sum(1 for v in PROVIDER_HEALTH.values() if not v), len(PROVIDER_HEALTH))
+        await _log_error("llm", "providers_degraded",
+                         f"{sum(1 for v in PROVIDER_HEALTH.values() if not v)}/{len(PROVIDER_HEALTH)} unhealthy")
+    return ok
+
+
+async def _check_provider(provider: dict) -> bool:
+    import requests
+    loop = asyncio.get_running_loop()
+    name = provider["name"]
+
+    if name in ("huggingface",):
+        headers = {"Authorization": f"Bearer {provider['key']}"}
+        url = f"https://api-inference.huggingface.co/models/{provider['model']}"
         payload = {"inputs": "ping", "parameters": {"max_new_tokens": 5}}
-        loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None, lambda: requests.post(url, headers=headers, json=payload, timeout=30)
         )
-        ok = resp.status_code == 200
-        global _llm_degraded
-        if ok and _llm_degraded:
-            _llm_degraded = False
-            logger.info("LLM recovered")
-            await _resolve_errors("llm")
-        elif not ok and not _llm_degraded:
-            _llm_degraded = True
-            logger.warning("LLM degraded (HTTP %s)", resp.status_code)
-            await _log_error("llm", "http", f"HTTP {resp.status_code}")
-        return ok
-    except Exception as e:
-        _llm_degraded = True
-        logger.error("LLM health check failed: %s", e)
-        await _log_error("llm", "request", str(e)[:500])
-        return False
+        return resp.status_code == 200
+
+    if name in ("openai", "groq", "deepseek", "together"):
+        base = provider.get("base_url", "")
+        url = f"{base.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
+        payload = {"model": provider["model"], "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}
+        resp = await loop.run_in_executor(
+            None, lambda: requests.post(url, headers=headers, json=payload, timeout=30)
+        )
+        return resp.status_code == 200
+
+    if name == "gemini":
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{provider['model']}:generateContent?key={provider['key']}"
+        payload = {"contents": [{"parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 5}}
+        resp = await loop.run_in_executor(
+            None, lambda: requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+        )
+        return resp.status_code == 200
+
+    if name == "cohere":
+        headers = {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
+        payload = {"model": provider["model"], "message": "ping", "max_tokens": 5}
+        resp = await loop.run_in_executor(
+            None, lambda: requests.post("https://api.cohere.com/v2/chat", headers=headers, json=payload, timeout=30)
+        )
+        return resp.status_code == 200
+
+    return True
 
 
 async def check_tg_bot() -> bool:

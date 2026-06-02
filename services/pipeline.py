@@ -96,6 +96,11 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
         if cfg_niche:
             niche = cfg_niche
 
+        lang_tr = await session.execute(
+            select(TenantConfig.language).where(TenantConfig.tenant_id == tenant_id)
+        )
+        target_lang = lang_tr.scalar_one_or_none() or "ru"
+
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, lambda: _llm_client.rewrite(tenant_id, niche, post.content or "")
@@ -107,6 +112,22 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
     from services.antiplag import add_attribution, ensure_unique
     rewritten_content, _ = ensure_unique(rewritten_content, original_content)
     rewritten_content = add_attribution(rewritten_content, post.link)
+
+    # Language check & translate
+    if target_lang != "ru":
+        from services.language import build_translation_prompt, detect_language, needs_translation
+        detected = detect_language(rewritten_content)
+        if needs_translation(detected, target_lang):
+            logger.info("Post %d: detected %s, translating to %s", post_id, detected, target_lang)
+            loop = asyncio.get_running_loop()
+            prompt = build_translation_prompt(rewritten_content, target_lang)
+            tresult = await loop.run_in_executor(
+                None, lambda: _llm_client.rewrite(tenant_id, niche, prompt)
+            )
+            translated = tresult.get("content", rewritten_content)
+            if translated and len(translated) > 20:
+                rewritten_content = translated
+                logger.info("Post %d translated %s→%s", post_id, detected, target_lang)
 
     # Validate before queue
     from services.validation import validate_post

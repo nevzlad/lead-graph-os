@@ -432,6 +432,7 @@ async def process_niche(message: Message, state: FSMContext):
             tg_user_id=user_id,
             tg_chat_id=data["chat_id"],
             niche=niche,
+            language="ru",
             billing_status="trial",
             telemetry_opt_in=False,
             api_limit_bonus=0,

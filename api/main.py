@@ -33,6 +33,7 @@ async def on_startup():
             "ALTER TABLE schedules ADD COLUMN IF NOT EXISTS interval_minutes INTEGER DEFAULT 1440 NOT NULL",
             "ALTER TABLE posts ADD COLUMN IF NOT EXISTS image TEXT DEFAULT NULL",
             "ALTER TABLE posts ADD COLUMN IF NOT EXISTS paused BOOLEAN DEFAULT FALSE NOT NULL",
+            "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS language VARCHAR(10) DEFAULT 'ru' NOT NULL",
         ]:
             try:
                 await conn.execute(text(stmt))
@@ -105,17 +106,20 @@ async def on_shutdown():
 async def debug():
     global bot_task, pipeline_task, health_task, error_task
     from services.health import is_llm_degraded, is_tg_degraded
+    from services.llm import PROVIDER_HEALTH, get_all_providers, get_healthy_providers
     return {
         "bot_running": bot_task is not None and not bot_task.done(),
         "pipeline_running": pipeline_task is not None and not pipeline_task.done(),
         "health_running": health_task is not None and not health_task.done(),
         "error_analyzer_running": error_task is not None and not error_task.done(),
+        "repair_running": repair_task is not None and not repair_task.done(),
         "llm_degraded": is_llm_degraded(),
         "tg_degraded": is_tg_degraded(),
         "mode": settings.MODE,
         "providers": {
-            "hf": bool(settings.HF_API_KEY),
-            "openai": bool(settings.OPENAI_API_KEY),
+            "all": get_all_providers(),
+            "healthy": get_healthy_providers(),
+            "health": PROVIDER_HEALTH,
         },
     }
 

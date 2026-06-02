@@ -34,6 +34,7 @@ class TenantConfig(Base, TenantMixin):
     telemetry_opt_in: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     api_limit_bonus: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     auto_publish: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    language: Mapped[str] = mapped_column(String(10), default="ru", nullable=False)
     __table_args__ = (Index("ix_tenant_configs_tenant", "tenant_id", unique=True),)
 
 
