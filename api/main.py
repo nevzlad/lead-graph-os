@@ -14,11 +14,14 @@ app = FastAPI(title="Lead-Graph OS API", version="1.0.0")
 
 bot_task: asyncio.Task | None = None
 pipeline_task: asyncio.Task | None = None
+health_task: asyncio.Task | None = None
+error_task: asyncio.Task | None = None
+repair_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global bot_task, pipeline_task
+    global bot_task, pipeline_task, health_task, error_task, repair_task
     from models import Base
     from utils.db import engine
 
@@ -60,31 +63,60 @@ async def on_startup():
     pipeline_task = asyncio.create_task(pipeline_loop())
     logger.info("Pipeline loop created.")
 
+    logger.info("Starting health check loop...")
+    from services.health import health_loop
+    health_task = asyncio.create_task(health_loop())
+    logger.info("Health check loop created.")
+
+    logger.info("Starting error analyzer loop...")
+    from services.errors import analyze_and_fix
+    async def _error_loop():
+        while True:
+            try:
+                await analyze_and_fix()
+            except Exception as e:
+                logger.error("Error analyzer failed: %s", e, exc_info=True)
+            await asyncio.sleep(600)
+    error_task = asyncio.create_task(_error_loop())
+    logger.info("Error analyzer loop created.")
+
+    logger.info("Starting post repair loop...")
+    from services.repair import pipeline_repair_loop
+    repair_task = asyncio.create_task(pipeline_repair_loop())
+    logger.info("Post repair loop created.")
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
     global bot_task, pipeline_task
-    for t in (pipeline_task, bot_task):
+    for t in (pipeline_task, bot_task, health_task, error_task, repair_task):
         if t:
             t.cancel()
             try:
                 await t
             except asyncio.CancelledError:
                 pass
-    bot_task = None
-    pipeline_task = None
+    for v in ("bot_task", "pipeline_task", "health_task", "error_task", "repair_task"):
+        globals()[v] = None
     logger.info("Background tasks cancelled.")
 
 
 @app.get("/debug")
 async def debug():
-    global bot_task, pipeline_task
+    global bot_task, pipeline_task, health_task, error_task
+    from services.health import is_llm_degraded, is_tg_degraded
     return {
         "bot_running": bot_task is not None and not bot_task.done(),
-        "bot_done": bot_task is not None and bot_task.done(),
-        "bot_cancelled": bot_task is not None and bot_task.cancelled(),
         "pipeline_running": pipeline_task is not None and not pipeline_task.done(),
+        "health_running": health_task is not None and not health_task.done(),
+        "error_analyzer_running": error_task is not None and not error_task.done(),
+        "llm_degraded": is_llm_degraded(),
+        "tg_degraded": is_tg_degraded(),
         "mode": settings.MODE,
+        "providers": {
+            "hf": bool(settings.HF_API_KEY),
+            "openai": bool(settings.OPENAI_API_KEY),
+        },
     }
 
 

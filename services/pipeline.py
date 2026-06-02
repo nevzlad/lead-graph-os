@@ -101,6 +101,31 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
         None, lambda: _llm_client.rewrite(tenant_id, niche, post.content or "")
     )
 
+    rewritten_content = result.get("content", post.content or "")
+    original_content = post.content or ""
+
+    from services.antiplag import add_attribution, ensure_unique
+    rewritten_content, _ = ensure_unique(rewritten_content, original_content)
+    rewritten_content = add_attribution(rewritten_content, post.link)
+
+    # Validate before queue
+    from services.validation import validate_post
+    vresult = await validate_post(
+        tenant_id=tenant_id,
+        title=post.title,
+        content=rewritten_content,
+        original_content=original_content,
+    )
+    if not vresult["passed"]:
+        logger.warning("Post %d validation failed: %s", post_id, [i["code"] for i in vresult["issues"]])
+        if vresult["warnings"]:
+            logger.info("Post %d warnings: %s", post_id, [w["code"] for w in vresult["warnings"]])
+        # Try auto-fix for content issues
+        from services.validation import auto_fix_content
+        rewritten_content, fixes = await auto_fix_content(rewritten_content, vresult)
+        if fixes:
+            logger.info("Post %d auto-fixed: %s", post_id, fixes)
+
     async with async_session_factory() as session:
         reresult = await session.execute(
             select(Post).where(Post.id == post_id, Post.tenant_id == tenant_id)
@@ -108,7 +133,7 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
         post = reresult.scalar_one_or_none()
         if not post:
             return "skipped"
-        post.content = result["content"]
+        post.content = rewritten_content
         post.status = "rewritten" if result["status"] == "success" else "rewritten_fallback"
         post.updated_at = datetime.now(timezone.utc)
         await session.commit()

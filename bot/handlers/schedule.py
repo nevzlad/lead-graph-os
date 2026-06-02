@@ -243,8 +243,9 @@ async def queue_show_post(callback: CallbackQuery):
             [InlineKeyboardButton(text="✏️ Заголовок", callback_data=f"queue:edit_title:{post.id}"),
              InlineKeyboardButton(text="✏️ Текст", callback_data=f"queue:edit_content:{post.id}")],
             [InlineKeyboardButton(text="⏸ Пауза" if not post.paused else "▶️ Возобновить", callback_data=f"queue:toggle:{post.id}"),
-             InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="queue:list")],
+             InlineKeyboardButton(text="🔧 Починить", callback_data=f"queue:repair:{post.id}")],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"queue:del:{post.id}"),
+             InlineKeyboardButton(text="◀️ Назад", callback_data="queue:list")],
         ]
         await callback.answer()
         await callback.message.edit_text(text, parse_mode="Markdown",
@@ -334,6 +335,44 @@ async def queue_publish_post(callback: CallbackQuery):
             await session.commit()
 
     await callback.message.answer("✅ Пост опубликован!")
+
+
+@router.callback_query(F.data.startswith("queue:repair:"))
+async def queue_repair_post(callback: CallbackQuery):
+    try:
+        post_id = int(callback.data.split(":", 2)[2])
+        await callback.answer()
+        status_msg = await callback.message.answer("🔧 Диагностика поста...")
+
+        from services.repair import check_post_published, retry_publish
+
+        check = await check_post_published(post_id)
+        if check.get("published") and check.get("verified"):
+            await status_msg.edit_text("✅ Пост уже опубликован, проблем нет.")
+            return
+
+        issues = check.get("issues", [])
+        if issues:
+            lines = ["🔍 Найденные проблемы:", ""]
+            for iss in issues:
+                lines.append(f"  • {iss}")
+            await status_msg.edit_text("\n".join(lines))
+        else:
+            await status_msg.edit_text("🔍 Видимых проблем нет, пробую перепубликацию...")
+
+        result = await retry_publish(post_id)
+        if result["success"]:
+            fixes = result.get("fixes_applied", [])
+            fix_text = f"✅ Перепубликация успешна (msg_id={result['external_id']})"
+            if fixes:
+                fix_text += f"\n🔧 Применены исправления: {', '.join(fixes)}"
+            await status_msg.edit_text(fix_text)
+        else:
+            await status_msg.edit_text(f"❌ Не удалось исправить: {result.get('error', 'неизвестная ошибка')}")
+
+    except Exception as e:
+        logger.error("queue:repair error: %s", e, exc_info=True)
+        await callback.answer(f"❌ {e}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("queue:toggle:"))

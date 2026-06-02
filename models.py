@@ -84,3 +84,13 @@ class Schedule(Base, TenantMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     interval_minutes: Mapped[int] = mapped_column(Integer, default=1440, nullable=False)
     __table_args__ = (Index("ix_schedules_tenant", "tenant_id"),)
+
+
+class ServiceError(Base):
+    __tablename__ = "service_errors"
+    service_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    error_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    error_msg: Mapped[str] = mapped_column(Text, nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

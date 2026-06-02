@@ -166,6 +166,17 @@ async def _show_preview(message: Message, state: FSMContext):
             parse_mode="HTML",
         )
 
+    from services.validation import validate_post, format_validation_result
+    vresult = await validate_post(
+        tenant_id=tenant_id,
+        title=title,
+        content=content,
+        skip_db_checks=True,
+    )
+    validation_text = format_validation_result(vresult)
+    if not vresult["passed"] or vresult["warnings"]:
+        await message.answer(validation_text)
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Опубликовать", callback_data="post:confirm")],
         [InlineKeyboardButton(text="✏️ Изменить заголовок", callback_data="post:edit_title")],
@@ -205,11 +216,32 @@ async def post_confirm(callback: CallbackQuery, state: FSMContext):
     publish_now = scheduled <= datetime.now(timezone.utc)
     status = "published" if publish_now else "scheduled"
 
+    title = data["title"]
+    content = data.get("content")
+
+    # Validate before saving
+    from services.validation import auto_fix_content, validate_post
+    vresult = await validate_post(
+        tenant_id=data["tenant_id"],
+        title=title,
+        content=content,
+    )
+    if vresult["issues"]:
+        content, fixes = await auto_fix_content(content or "", vresult)
+        if fixes:
+            await callback.message.answer(f"🔧 Авто-исправления: {', '.join(fixes)}")
+        else:
+            from services.validation import format_validation_result
+            await callback.message.answer(
+                f"❌ Не все проблемы решены:\n{format_validation_result(vresult)}\n\nИсправь и попробуй снова."
+            )
+            return
+
     post = Post(
         tenant_id=data["tenant_id"],
         source_id=0,
-        title=data["title"],
-        content=data.get("content"),
+        title=title,
+        content=content,
         image=data.get("image"),
         status=status,
         scheduled_at=scheduled,
