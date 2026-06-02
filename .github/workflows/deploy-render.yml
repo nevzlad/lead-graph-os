@@ -16,29 +16,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Just trigger deploy and wait for live (no env var updates)
+
+      - name: Get service config and latest deploy status
         run: |
           set -e
-          SVC_ID=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+          # Read service details
+          curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100" | python3 -c "
           import json,sys
           d=json.load(sys.stdin)
           for i in d:
               s=i.get('service',i)
-              if s['name']=='leadgraph-api':
-                  print(s['id']);break
-          ")
-          [ -n "$SVC_ID" ] || { echo "Service not found"; exit 1; }
-          echo "SVC: $SVC_ID"
+              if s['name']!='leadgraph-api': continue
+              sid=s['id']
+              print(f'Service ID: {sid}')
+              print(f'Service name: {s.get(\"name\",\"?\")}')
+              print(f'Service type: {s.get(\"type\",\"?\")}')
+              print(f'Service runtime: {s.get(\"runtime\",\"?\")}')
+              print(f'Service repo: {s.get(\"repo\",\"?\")}')
+              print(f'Service branch: {s.get(\"branch\",\"?\")}')
+              print(f'Service autoDeploy: {s.get(\"autoDeploy\",\"?\")}')
+              print(f'Service startCommand: {s.get(\"startCommand\",\"?\")}')
+              print(f'Service buildCommand: {s.get(\"buildCommand\",\"?\")}')
+              print(f'Service healthCheckPath: {s.get(\"healthCheckPath\",\"?\")}')
+              print(f'Service envVars: {s.get(\"envVars\",\"?\")}')
+              # Write service ID to file
+              with open('svc_id.txt','w') as f: f.write(sid)
+              break
+          else:
+              print('Service not found')
+              exit(1)
+          "
 
-          # Just trigger deploy — env vars already set on service
+      - name: Trigger deploy
+        run: |
+          set -e
+          SVC_ID=$(cat svc_id.txt)
           curl -sfS -X POST -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache":"clear"}' \
+            -d '{"clearCache":true}' \
             "https://api.render.com/v1/services/$SVC_ID/deploys" > /dev/null
-          echo "deploy triggered"
+          echo "Deploy triggered"
 
-          # Poll for live status
+      - name: Wait for live (up to 5 min)
+        run: |
+          SVC_ID=$(cat svc_id.txt)
           for i in $(seq 1 10); do
             echo "  check $i/10..."
             sleep 30
@@ -63,8 +85,12 @@ jobs:
               live) echo "LIVE!"; exit 0 ;;
               build_failed|update_failed|deactivated)
                 echo "FAILED: $STATUS"
-                echo "=== deploy info ==="
-                echo "$INFO" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d[0].get('deploy',d[0]),indent=2))" 2>/dev/null || echo "$INFO"
+                echo "$INFO" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d[0].get('deploy',d[0]),indent=2))"
+                # Try various log endpoints
+                for ep in "/v1/services/$SVC_ID/deploys/$DID/logs" "/v1/deploys/$DID/logs"; do
+                  echo "=== Logs from $ep ==="
+                  curl -sS -H "Authorization: Bearer $RENDER_API_KEY" "https://api.render.com$ep" 2>/dev/null | head -100
+                done
                 exit 1 ;;
             esac
           done

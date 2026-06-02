@@ -65,7 +65,7 @@ async def debug():
 
 @app.get("/debug/cleanup")
 async def debug_cleanup():
-    from sqlalchemy import func, select
+    from sqlalchemy import select
 
     from models import TenantConfig
     from utils.db import async_session_factory
