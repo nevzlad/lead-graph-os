@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set env vars and deploy leadgraph-api
+      - name: Trigger deploy and wait for live
         id: deploy
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -24,114 +24,79 @@ jobs:
           HF_API_KEY: ${{ secrets.HF_API_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          if [ -z "$RENDER_API_KEY" ]; then
-            echo "Skipping: RENDER_API_KEY not set"
-            exit 0
-          fi
           set -e
-          SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            "https://api.render.com/v1/services?limit=100")
-          echo "$SERVICES" | python3 -c "
-          import json, sys, os, urllib.request
-          data = json.load(sys.stdin)
-          token = os.environ['RENDER_API_KEY']
-          name = 'leadgraph-api'
-          svc = None
-          for item in data:
-              s = item.get('service') or item
-              if s.get('name', '') == name:
-                  svc = s
-                  break
-          if not svc:
-              print(f'Service {name} not found - skipping')
-              exit(0)
-          sid = svc['id']
-          print(f'Found: {name} ({sid})')
+          # 1. Find service ID
+          SVC_ID=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/services?limit=100" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for i in d:
+              s=i.get('service',i)
+              if s['name']=='leadgraph-api':
+                  print(s['id']);break
+          ")
+          [ -n "$SVC_ID" ] || { echo "Service not found"; exit 1; }
+          echo "SVC: $SVC_ID"
 
-          cur_req = urllib.request.Request(
-              f'https://api.render.com/v1/services/{sid}/env-vars',
-              headers={'Authorization': f'Bearer {token}'},
-          )
-          cur = json.loads(urllib.request.urlopen(cur_req).read())
-          env_map = {}
-          for ev in cur:
-              env_var = ev.get('envVar') or ev
-              key = env_var.get('key', '')
-              if not key:
-                  continue
-              if 'generateValue' in ev or 'generateValue' in env_var:
-                  continue
-              val = ev.get('value') or env_var.get('value', '')
-              if val:
-                  env_map[key] = val
-          for env_key in ('HF_API_KEY', 'TG_BOT_TOKEN', 'ONBOARDING_BOT_TOKEN'):
-              val = os.environ.get(env_key, '')
-              if val:
-                  env_map[env_key] = val
-          db_url = os.environ.get('DATABASE_URL', '')
-          if db_url:
-              env_map['DATABASE_URL'] = db_url
-          if env_map:
-              env_payload = [{'key': k, 'value': v} for k, v in env_map.items()]
-              body = json.dumps(env_payload).encode()
-              req = urllib.request.Request(
+          # 2. Update env vars
+          echo "$TG_BOT_TOKEN$HF_API_KEY$ONBOARDING_BOT_TOKEN$DATABASE_URL" >/dev/null
+          curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$SVC_ID/env-vars" | python3 -c "
+          import json,os,urllib.request
+          sid='$SVC_ID'; tok=os.environ['RENDER_API_KEY']
+          env={}
+          for e in json.load(sys.stdin):
+              ev=e.get('envVar',e)
+              k=ev.get('key','')
+              if not k or 'generateValue' in str(e): continue
+              v=e.get('value',ev.get('value',''))
+              if v: env[k]=v
+          for k in ('HF_API_KEY','TG_BOT_TOKEN','ONBOARDING_BOT_TOKEN'):
+              v=os.environ.get(k,'')
+              if v: env[k]=v
+          db=os.environ.get('DATABASE_URL','')
+          if db: env['DATABASE_URL']=db
+          if env:
+              body=json.dumps([{'key':k,'value':v} for k,v in env.items()]).encode()
+              urllib.request.urlopen(urllib.request.Request(
                   f'https://api.render.com/v1/services/{sid}/env-vars',
-                  data=body,
-                  method='PUT',
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Content-Type': 'application/json',
-                  },
-              )
-              urllib.request.urlopen(req)
-              print(f'Env vars set: {len(env_map)} vars')
-          deploy_body = json.dumps({'clearCache': 'clear'}).encode()
-          deploy_req = urllib.request.Request(
-              f'https://api.render.com/v1/services/{sid}/deploys',
-              method='POST',
-              headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
-              data=deploy_body,
-          )
-          deploy_resp_raw = urllib.request.urlopen(deploy_req).read().decode()
-          if deploy_resp_raw:
-              deploy_resp = json.loads(deploy_resp_raw)
-              deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
-              print(f'Deploy triggered: {deploy_id}')
-              # Write deploy id to file for next step
-              with open('deploy_id.txt', 'w') as f:
-                  f.write(deploy_id)
-          else:
-              print(f'Deploy triggered - no response body')
+                  data=body,method='PUT',
+                  headers={'Authorization':f'Bearer {tok}','Content-Type':'application/json'}))
+              print(f'env: {len(env)} vars')
           "
-      - name: Wait for deploy (up to 5 min) and check status
-        run: |
-          if [ ! -f deploy_id.txt ]; then
-            echo "No deploy ID - skipping status check"
-            exit 0
-          fi
-          DEPLOY_ID=$(cat deploy_id.txt)
-          echo "Waiting for deploy $DEPLOY_ID to go live..."
-          STATUS=""
-          for ATTEMPT in $(seq 1 10); do
-            echo "Attempt $ATTEMPT/10..."
+          echo "env done"
+
+          # 3. Trigger deploy
+          curl -sfS -X POST -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":"clear"}' \
+            "https://api.render.com/v1/services/$SVC_ID/deploys" > /dev/null
+          echo "deploy triggered"
+
+          # 4. Poll for live status
+          for i in $(seq 1 10); do
+            echo "  check $i/10..."
             sleep 30
-            JSON=$(curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
-              "https://api.render.com/v1/deploys/$DEPLOY_ID")
-            STATUS=$(echo "$JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','?'))" 2>/dev/null || echo "fetch_error")
-            echo "Deploy status: $STATUS"
-            if [ "$STATUS" = "live" ]; then
-              echo "Deploy is LIVE!"
-              exit 0
-            fi
-            if [ "$STATUS" = "build_failed" ] || [ "$STATUS" = "update_failed" ] || [ "$STATUS" = "deactivated" ]; then
-              echo "Deploy FAILED with status: $STATUS"
-              echo "=== Deploy details ==="
-              echo "$JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d, indent=2))" 2>/dev/null || echo "$JSON"
-              exit 1
-            fi
+            STATUS=$(curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$SVC_ID/deploys?limit=1" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          if not d: print('no_deploys'); exit(0)
+          dep=d[0].get('deploy',d[0])
+          s=dep.get('status','?')
+          print(s)
+          ")
+            echo "  status: $STATUS"
+            case "$STATUS" in
+              live) echo "LIVE!"; exit 0 ;;
+              build_failed|update_failed|deactivated)
+                echo "FAILED: $STATUS"
+                curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+                  "https://api.render.com/v1/services/$SVC_ID/deploys?limit=1"
+                exit 1 ;;
+            esac
           done
-          echo "Timed out waiting for deploy. Last status: $STATUS"
-          exit 1
+          echo "timeout"; exit 1
 
   verify-bot:
     runs-on: ubuntu-latest
