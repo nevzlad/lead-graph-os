@@ -56,6 +56,69 @@ async def cmd_ping(message: Message):
     await message.answer("pong")
 
 
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Настройка канала", callback_data="help:setup")],
+        [InlineKeyboardButton(text="🌐 Ниша шаблона", callback_data="help:template")],
+        [InlineKeyboardButton(text="📡 RSS-источники", callback_data="help:source")],
+        [InlineKeyboardButton(text="💳 Биллинг", callback_data="help:billing")],
+        [InlineKeyboardButton(text="📊 Телеметрия", callback_data="help:telemetry")],
+    ])
+    await message.answer(
+        "🤖 *Lead-Graph OS* — бот для автопостинга в Telegram\n\n"
+        "Доступные команды:\n"
+        "`/setup` — настроить канал\n"
+        "`/template` — сменить нишу\n"
+        "`/source` — управлять RSS\n"
+        "`/billing` — тарифы\n"
+        "`/telemetry` — телеметрия\n"
+        "`/help` — это меню",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.startswith("help:"))
+async def help_callback(cb: CallbackQuery):
+    help_texts = {
+        "setup": (
+            "📝 *Настройка канала*\n\n"
+            "`/setup` или `/start` — привяжи Telegram-канал "
+            "(ID начинается с -100 или @username) и выбери нишу."
+        ),
+        "template": (
+            "🌐 *Ниша шаблона*\n\n"
+            "`/template` — выбери стиль генерации:\n"
+            "• Новости — строгий пересказ\n"
+            "• Блог — разговорный стиль\n"
+            "• Магазин — продающее описание"
+        ),
+        "source": (
+            "📡 *RSS-источники*\n\n"
+            "`/source` — добавь RSS-ленту, откуда бот будет брать контент.\n"
+            "Можно включить/выключить или удалить источник."
+        ),
+        "billing": (
+            "💳 *Биллинг*\n\n"
+            "`/billing` — тарифы и статус подписки.\n"
+            f"• Trial: {settings.TRIAL_DAYS} дней бесплатно\n"
+            "• Basic: $9/мес\n"
+            "• Pro: $15/мес"
+        ),
+        "telemetry": (
+            "📊 *Телеметрия*\n\n"
+            "`/telemetry` — включи обезличенную статистику "
+            "и получи +100 к лимиту API навсегда (один раз)."
+        ),
+    }
+    key = cb.data.split(":", 1)[1]
+    text = help_texts.get(key, "Неизвестный раздел.")
+    await cb.answer()
+    await cb.message.edit_text(text, parse_mode="Markdown")
+
+
 @router.message(Command("source"))
 async def cmd_source(message: Message):
     try:

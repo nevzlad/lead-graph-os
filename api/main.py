@@ -13,11 +13,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Lead-Graph OS API", version="1.0.0")
 
 bot_task: asyncio.Task | None = None
+pipeline_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global bot_task
+    global bot_task, pipeline_task
     from models import Base
     from utils.db import engine
 
@@ -29,29 +30,64 @@ async def on_startup():
     bot_task = asyncio.create_task(bot_main())
     logger.info("Bot background task created.")
 
+    logger.info("Starting pipeline loop...")
+    from services.pipeline import pipeline_loop
+    pipeline_task = asyncio.create_task(pipeline_loop())
+    logger.info("Pipeline loop created.")
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global bot_task
-    if bot_task:
-        bot_task.cancel()
-        try:
-            await bot_task
-        except asyncio.CancelledError:
-            pass
-        bot_task = None
-        logger.info("Bot background task cancelled.")
+    global bot_task, pipeline_task
+    for t in (pipeline_task, bot_task):
+        if t:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+    bot_task = None
+    pipeline_task = None
+    logger.info("Background tasks cancelled.")
 
 
 @app.get("/debug")
 async def debug():
-    global bot_task
+    global bot_task, pipeline_task
     return {
         "bot_running": bot_task is not None and not bot_task.done(),
         "bot_done": bot_task is not None and bot_task.done(),
         "bot_cancelled": bot_task is not None and bot_task.cancelled(),
+        "pipeline_running": pipeline_task is not None and not pipeline_task.done(),
         "mode": settings.MODE,
     }
+
+
+@app.get("/debug/cleanup")
+async def debug_cleanup():
+    from sqlalchemy import func, select
+
+    from models import TenantConfig
+    from utils.db import async_session_factory
+
+    try:
+        deleted = 0
+        async with async_session_factory() as session:
+            rows = await session.execute(
+                select(TenantConfig).order_by(TenantConfig.created_at)
+            )
+            seen = {}
+            for row in rows.scalars().all():
+                uid = row.tg_user_id
+                if uid in seen:
+                    await session.delete(row)
+                    deleted += 1
+                else:
+                    seen[uid] = True
+            await session.commit()
+        return {"deleted": deleted}
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
 
 
 @app.get("/debug/tenants")
