@@ -102,6 +102,11 @@ async def on_shutdown():
     logger.info("Background tasks cancelled.")
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/debug")
 async def debug():
     global bot_task, pipeline_task, health_task, error_task
