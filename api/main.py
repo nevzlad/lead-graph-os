@@ -120,7 +120,7 @@ async def debug():
     bot_info = None
     if bot_mod.bot:
         try:
-            me = await bot_mod.bot.get_me()
+            me = await asyncio.wait_for(bot_mod.bot.get_me(), timeout=5)
             bot_info = {"id": me.id, "username": me.username, "first_name": me.first_name}
         except Exception as e:
             bot_info = {"error": str(e)[:200]}
