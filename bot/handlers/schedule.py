@@ -236,18 +236,14 @@ async def queue_noop(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("queue:post:"))
 async def queue_show_post(callback: CallbackQuery):
-    logger.info("queue:post callback received: data=%s", callback.data)
     try:
         post_id = int(callback.data.split(":", 2)[2])
         async with async_session_factory() as session:
             post = await session.get(Post, post_id)
             if not post:
-                logger.info("queue:post %d not found", post_id)
                 await callback.answer("Пост не найден")
-                await callback.message.edit_text("❌ Пост не найден.\nВозможно, он был удалён.")
                 return
 
-        logger.info("queue:post %d rendering detail", post_id)
         status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "published": "📤", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(post.status, "❓")
         pause_label = "⏸ Приостановлен" if post.paused else ""
         created = post.created_at.strftime("%d.%m.%Y %H:%M")
