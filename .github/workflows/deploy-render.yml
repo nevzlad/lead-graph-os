@@ -42,7 +42,7 @@ jobs:
           echo "$TG_BOT_TOKEN$HF_API_KEY$ONBOARDING_BOT_TOKEN$DATABASE_URL" >/dev/null
           curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
             "https://api.render.com/v1/services/$SVC_ID/env-vars" | python3 -c "
-          import json,os,urllib.request
+          import json,os,sys,urllib.request
           sid='$SVC_ID'; tok=os.environ['RENDER_API_KEY']
           env={}
           for e in json.load(sys.stdin):
