@@ -199,8 +199,11 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
         source_list = sources.scalars().all()
 
     for source in source_list:
-        collected = await collect_source(source.id, tenant_id)
-        counts["collected"] += collected
+        try:
+            collected = await collect_source(source.id, tenant_id)
+            counts["collected"] += collected
+        except Exception as e:
+            logger.warning("Source %d (%s) collection failed: %s", source.id, source.url, e)
 
     async with async_session_factory() as session:
         raw_posts = await session.execute(
