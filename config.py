@@ -60,6 +60,16 @@ def _build_providers():
             "base_url": "https://api.deepseek.com",
         })
 
+    cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
+    if cerebras_key:
+        providers.append({
+            "name": "cerebras",
+            "type": "openai_compat",
+            "key": cerebras_key,
+            "model": os.getenv("CEREBRAS_MODEL", "cerebras/Llama-3.3-70B"),
+            "base_url": "https://api.cerebras.ai/v1",
+        })
+
     cohere_key = os.getenv("COHERE_API_KEY", "")
     if cohere_key:
         providers.append({
