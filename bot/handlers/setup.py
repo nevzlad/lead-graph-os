@@ -127,7 +127,30 @@ async def on_cmd_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SetupStates.waiting_chat_id)
 async def process_chat_id(message: Message, state: FSMContext):
-    await state.update_data(chat_id=str(message.text).strip())
+    raw = str(message.text).strip()
+    if not (raw.startswith("-100") or raw.startswith("@")):
+        await message.answer(
+            "❌ Неверный формат. ID канала должен начинаться с -100 или @username.\n"
+            "Попробуй ещё раз:"
+        )
+        return
+
+    user_id = str(message.from_user.id)
+    async with async_session_factory() as session:
+        dup = await session.scalar(
+            select(TenantConfig.tg_chat_id).where(
+                TenantConfig.tg_user_id == user_id,
+                TenantConfig.tg_chat_id == raw,
+            )
+        )
+        if dup:
+            await message.answer(
+                "❌ Этот канал уже добавлен. Используй /start чтобы увидеть список каналов."
+            )
+            await state.clear()
+            return
+
+    await state.update_data(chat_id=raw)
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📰 Новости"), KeyboardButton(text="📝 Блог")],
