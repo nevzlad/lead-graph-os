@@ -206,14 +206,14 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
             logger.warning("Source %d (%s) collection failed: %s", source.id, source.url, e)
 
     async with async_session_factory() as session:
-        raw_posts = await session.execute(
+        to_rewrite = await session.execute(
             select(Post).where(
                 Post.tenant_id == tenant_id,
-                Post.status == "raw",
+                Post.status.in_(["raw", "rewritten_fallback"]),
             )
         )
-        for post in raw_posts.scalars().all():
-            status = await rewrite_post(post.id, tenant_id)
+        for post in to_rewrite.scalars().all():
+            status = await rewrite_post(post.id, tenant_id, force=post.status == "rewritten_fallback")
             if status in ("rewritten", "rewritten_fallback"):
                 counts["rewritten"] += 1
 

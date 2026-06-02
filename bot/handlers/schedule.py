@@ -223,6 +223,9 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
             InlineKeyboardButton(text="🗑", callback_data=f"queue:del:{p.id}"),
         ])
 
+    action_row = [InlineKeyboardButton(text="🌐 Перевести все", callback_data=f"queue:retranslate_all:{tenant.tenant_id}")]
+    kb.append(action_row)
+
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="◀️", callback_data=f"queue:page:{page - 1}"))
@@ -476,6 +479,46 @@ async def queue_retranslate_post(callback: CallbackQuery):
         await callback.answer(f"❌ {e}", show_alert=True)
 
     await queue_show_post(callback)
+
+
+@router.callback_query(F.data.startswith("queue:retranslate_all:"))
+async def queue_retranslate_all(callback: CallbackQuery):
+    tenant_id = callback.data.split(":", 2)[2]
+    await callback.answer("⏳ Перевожу все посты...")
+
+    async with async_session_factory() as session:
+        posts = await session.execute(
+            select(Post).where(
+                Post.tenant_id == tenant_id,
+                Post.status.in_(["raw", "rewritten", "rewritten_fallback", "scheduled", "draft"]),
+            )
+        )
+        all_posts = posts.scalars().all()
+
+    if not all_posts:
+        await callback.message.edit_text("Нет постов для перевода")
+        return
+
+    total = len(all_posts)
+    ok = 0
+    fail = 0
+
+    for p in all_posts:
+        try:
+            status = await rewrite_post(p.id, tenant_id, force=True)
+            if status in ("rewritten", "rewritten_fallback"):
+                ok += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+
+    await callback.message.edit_text(
+        f"🌐 Перевод завершён: {ok}/{total} успешно{' · ' + str(fail) + ' ошибок' if fail else ''}"
+    )
+    tenants = await _get_user_tenants(str(callback.from_user.id))
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
 
 
 @router.callback_query(F.data.startswith("queue:edit_title:"))
