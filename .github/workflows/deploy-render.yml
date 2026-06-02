@@ -15,7 +15,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Set env vars and deploy leadgraph-api
+        id: deploy
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           ONBOARDING_BOT_TOKEN: ${{ secrets.ONBOARDING_BOT_TOKEN }}
@@ -83,63 +85,53 @@ jobs:
               )
               urllib.request.urlopen(req)
               print(f'Env vars set: {len(env_map)} vars')
+          deploy_body = json.dumps({'clearCache': 'clear'}).encode()
           deploy_req = urllib.request.Request(
               f'https://api.render.com/v1/services/{sid}/deploys',
               method='POST',
               headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
-              data=b'{}',
+              data=deploy_body,
           )
           deploy_resp_raw = urllib.request.urlopen(deploy_req).read().decode()
           if deploy_resp_raw:
               deploy_resp = json.loads(deploy_resp_raw)
               deploy_id = deploy_resp.get('id') or deploy_resp.get('deploy', {}).get('id', 'unknown')
               print(f'Deploy triggered: {deploy_id}')
+              # Write deploy id to file for next step
+              with open('deploy_id.txt', 'w') as f:
+                  f.write(deploy_id)
           else:
               print(f'Deploy triggered - no response body')
           "
-      - name: Wait for deploy and check status
+      - name: Wait for deploy (up to 5 min) and check status
         run: |
-          echo "Waiting 120s for deploy..."
-          sleep 120
-          SERVICES=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            "https://api.render.com/v1/services?limit=100")
-          echo "$SERVICES" | python3 -c "
-          import json, sys, os, urllib.request
-          data = json.load(sys.stdin)
-          token = os.environ['RENDER_API_KEY']
-          for item in data:
-              svc = item.get('service') or item
-              if svc.get('name', '') != 'leadgraph-api':
-                  continue
-              sid = svc['id']
-              deploys_req = urllib.request.Request(
-                  f'https://api.render.com/v1/services/{sid}/deploys?limit=1',
-                  headers={'Authorization': f'Bearer {token}'},
-              )
-              deploys = json.loads(urllib.request.urlopen(deploys_req).read())
-              if isinstance(deploys, list) and len(deploys) > 0:
-                  dep = deploys[0].get('deploy', deploys[0])
-                  dep_id = dep.get('id', '?')
-                  status = dep.get('status', '?')
-                  finished_at = dep.get('finishedAt', '')
-                  print(f'leadgraph-api: deploy {dep_id} - {status} (finished: {finished_at})')
-              else:
-                  print(f'leadgraph-api: no deploys')
-          "
-
-
-  deploy-hooks:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy API via hook
-        env:
-          URL: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
-        run: |
-          if [ -z "$URL" ]; then
-            echo "Skipping: RENDER_DEPLOY_HOOK_API not set"
+          if [ ! -f deploy_id.txt ]; then
+            echo "No deploy ID - skipping status check"
             exit 0
           fi
-          curl -fsS -X POST "$URL"
+          DEPLOY_ID=$(cat deploy_id.txt)
+          echo "Waiting for deploy $DEPLOY_ID to go live..."
+          STATUS=""
+          for ATTEMPT in $(seq 1 10); do
+            echo "Attempt $ATTEMPT/10..."
+            sleep 30
+            JSON=$(curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/deploys/$DEPLOY_ID")
+            STATUS=$(echo "$JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','?'))" 2>/dev/null || echo "fetch_error")
+            echo "Deploy status: $STATUS"
+            if [ "$STATUS" = "live" ]; then
+              echo "Deploy is LIVE!"
+              exit 0
+            fi
+            if [ "$STATUS" = "build_failed" ] || [ "$STATUS" = "update_failed" ] || [ "$STATUS" = "deactivated" ]; then
+              echo "Deploy FAILED with status: $STATUS"
+              echo "=== Deploy details ==="
+              echo "$JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d, indent=2))" 2>/dev/null || echo "$JSON"
+              exit 1
+            fi
+          done
+          echo "Timed out waiting for deploy. Last status: $STATUS"
+          exit 1
 
   verify-bot:
     runs-on: ubuntu-latest
