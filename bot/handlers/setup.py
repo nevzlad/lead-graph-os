@@ -127,6 +127,9 @@ async def on_cmd_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SetupStates.waiting_chat_id)
 async def process_chat_id(message: Message, state: FSMContext):
+    from aiogram import Bot
+    from aiogram.exceptions import TelegramBadRequest
+
     raw = str(message.text).strip()
     if not (raw.startswith("-100") or raw.startswith("@")):
         await message.answer(
@@ -149,6 +152,66 @@ async def process_chat_id(message: Message, state: FSMContext):
             )
             await state.clear()
             return
+
+    try:
+        chat = await message.bot.get_chat(raw)
+        chat_title = chat.title or chat.username or raw
+    except TelegramBadRequest:
+        chat_title = None
+
+    pub_bot_username = None
+    pub_bot_id = None
+    try:
+        async with Bot(token=settings.TG_BOT_TOKEN) as pub_bot:
+            me = await pub_bot.get_me()
+            pub_bot_id = me.id
+            pub_bot_username = me.username
+    except Exception:
+        pass
+
+    if chat_title and pub_bot_id:
+        try:
+            member = await message.bot.get_chat_member(raw, pub_bot_id)
+            is_admin = member.status in ("administrator", "creator")
+            can_post = getattr(member, "can_post_messages", False) if member.status == "administrator" else True
+            can_edit = getattr(member, "can_edit_messages", False) if member.status == "administrator" else True
+        except TelegramBadRequest:
+            is_admin = False
+            can_post = False
+            can_edit = False
+    else:
+        is_admin = False
+        can_post = False
+        can_edit = False
+
+    if not chat_title:
+        await message.answer(
+            f"❌ Не удалось найти канал `{raw}`.\n\n"
+            f"1. Добавь бота @{pub_bot_username or 'бота'} в канал как администратор\n"
+            f"2. Выдай права: «Отправлять сообщения», «Редактировать сообщения»\n"
+            f"3. Отправь ID канала ещё раз",
+            parse_mode="Markdown",
+        )
+        return
+
+    if not is_admin or not can_post:
+        perms = []
+        if not can_post:
+            perms.append("📝 Отправлять сообщения")
+        if not can_edit:
+            perms.append("✏️ Редактировать сообщения")
+        await message.answer(
+            f"❌ Бот @{pub_bot_username or 'бота'} не имеет прав в канале «{chat_title}».\n\n"
+            f"1. Открой настройки канала → Администраторы\n"
+            f"2. Добавь @{pub_bot_username or 'бота'} как администратора\n"
+            "3. Включи права:\n" + "\n".join(f"   • {p}" for p in (perms or ["все права"])) + "\n\n"
+            "4. Отправь ID канала ещё раз"
+        )
+        return
+
+    await message.answer(
+        f"✅ Канал «{chat_title}» найден, бот имеет все права."
+    )
 
     await state.update_data(chat_id=raw)
     kb = ReplyKeyboardMarkup(
