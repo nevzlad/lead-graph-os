@@ -16,16 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Trigger deploy and wait for live
-        id: deploy
-        env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          ONBOARDING_BOT_TOKEN: ${{ secrets.ONBOARDING_BOT_TOKEN }}
-          HF_API_KEY: ${{ secrets.HF_API_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Just trigger deploy and wait for live (no env var updates)
         run: |
           set -e
-          # 1. Find service ID
           SVC_ID=$(curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             "https://api.render.com/v1/services?limit=100" | python3 -c "
           import json,sys
@@ -38,42 +31,14 @@ jobs:
           [ -n "$SVC_ID" ] || { echo "Service not found"; exit 1; }
           echo "SVC: $SVC_ID"
 
-          # 2. Update env vars
-          echo "$TG_BOT_TOKEN$HF_API_KEY$ONBOARDING_BOT_TOKEN$DATABASE_URL" >/dev/null
-          curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
-            "https://api.render.com/v1/services/$SVC_ID/env-vars" | python3 -c "
-          import json,os,sys,urllib.request
-          sid='$SVC_ID'; tok=os.environ['RENDER_API_KEY']
-          env={}
-          for e in json.load(sys.stdin):
-              ev=e.get('envVar',e)
-              k=ev.get('key','')
-              if not k or 'generateValue' in str(e): continue
-              v=e.get('value',ev.get('value',''))
-              if v: env[k]=v
-          for k in ('HF_API_KEY','TG_BOT_TOKEN','ONBOARDING_BOT_TOKEN'):
-              v=os.environ.get(k,'')
-              if v: env[k]=v
-          db=os.environ.get('DATABASE_URL','')
-          if db: env['DATABASE_URL']=db
-          if env:
-              body=json.dumps([{'key':k,'value':v} for k,v in env.items()]).encode()
-              urllib.request.urlopen(urllib.request.Request(
-                  f'https://api.render.com/v1/services/{sid}/env-vars',
-                  data=body,method='PUT',
-                  headers={'Authorization':f'Bearer {tok}','Content-Type':'application/json'}))
-              print(f'env: {len(env)} vars')
-          "
-          echo "env done"
-
-          # 3. Trigger deploy
+          # Just trigger deploy — env vars already set on service
           curl -sfS -X POST -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":"clear"}' \
             "https://api.render.com/v1/services/$SVC_ID/deploys" > /dev/null
           echo "deploy triggered"
 
-          # 4. Poll for live status
+          # Poll for live status
           for i in $(seq 1 10); do
             echo "  check $i/10..."
             sleep 30
@@ -98,9 +63,8 @@ jobs:
               live) echo "LIVE!"; exit 0 ;;
               build_failed|update_failed|deactivated)
                 echo "FAILED: $STATUS"
-                echo "=== Deploy logs ==="
-                curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
-                  "https://api.render.com/v1/services/$SVC_ID/deploys/$DID/logs" 2>/dev/null || echo "(logs not available)"
+                echo "=== deploy info ==="
+                echo "$INFO" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d[0].get('deploy',d[0]),indent=2))" 2>/dev/null || echo "$INFO"
                 exit 1 ;;
             esac
           done
