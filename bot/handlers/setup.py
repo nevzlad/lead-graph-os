@@ -320,11 +320,6 @@ async def process_chat_id(message: Message, state: FSMContext):
         return
 
     if not perms["ok"]:
-        missing = []
-        if not perms["can_post"]:
-            missing.append("📝 Отправлять сообщения")
-        if not perms["can_edit"]:
-            missing.append("✏️ Редактировать сообщения")
         guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{raw}")],
@@ -374,11 +369,6 @@ async def chan_recheck(callback: CallbackQuery, state: FSMContext):
         await state.set_state(SetupStates.waiting_niche)
         return
 
-    missing = []
-    if not perms["can_post"]:
-        missing.append("📝 Отправлять сообщения")
-    if not perms["can_edit"]:
-        missing.append("✏️ Редактировать сообщения")
     guide = PERMISSION_GUIDE.format(bot_username=perms.get("pub_bot_username") or "бота")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"chan:recheck:{chat_id}")],
