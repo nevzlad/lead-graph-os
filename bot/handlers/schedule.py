@@ -472,7 +472,7 @@ async def queue_retranslate_post(callback: CallbackQuery):
         tenant_id = post.tenant_id
 
     try:
-        status = await rewrite_post(post_id, tenant_id, force=True)
+        await rewrite_post(post_id, tenant_id, force=True)
         await callback.answer("✅ Перевод завершён")
     except Exception as e:
         logger.error("retranslate error: %s", e, exc_info=True)
@@ -505,8 +505,8 @@ async def queue_retranslate_all(callback: CallbackQuery):
 
     for p in all_posts:
         try:
-            status = await rewrite_post(p.id, tenant_id, force=True)
-            if status in ("rewritten", "rewritten_fallback"):
+            result = await rewrite_post(p.id, tenant_id, force=True)
+            if result in ("rewritten", "rewritten_fallback"):
                 ok += 1
             else:
                 fail += 1
