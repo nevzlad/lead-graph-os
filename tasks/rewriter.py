@@ -9,7 +9,7 @@ from models import Post, Source, TenantConfig
 from services.antiplag import add_attribution
 from services.llm_router import LLMRouter
 from services.telegram import strip_html
-from services.validators import ContentValidator, validate_all
+from services.validators import ContentValidator
 from utils.db import async_session_factory, sync_session_factory
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ def process_post(self, post_id: int, tenant_id: str):
             logger.info("Tenant %s post %d: empty content, skip", tenant_id, post_id)
             return "skipped"
 
+        post_link = post.link
         router = LLMRouter()
         validator = ContentValidator()
 
@@ -72,7 +73,7 @@ def process_post(self, post_id: int, tenant_id: str):
                                tenant_id, post_id, validation2["errors"])
                 rewritten = strip_html(raw_content)
 
-        rewritten = add_attribution(rewritten, post.link)
+        rewritten = add_attribution(rewritten, post_link)
 
         post.content = rewritten
         if is_valid:
@@ -124,7 +125,9 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
         else:
             target_lang = settings.TARGET_LANGUAGE
 
-    raw_content = (post.content or "").strip()
+        raw_content = (post.content or "").strip()
+        post_link = post.link
+
     if not raw_content:
         return "skipped"
 
@@ -154,7 +157,7 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
                            post_id, validation2["errors"])
             rewritten = strip_html(raw_content)
 
-    rewritten = add_attribution(rewritten, post.link)
+    rewritten = add_attribution(rewritten, post_link)
 
     async with async_session_factory() as session:
         post = await session.get(Post, post_id)
