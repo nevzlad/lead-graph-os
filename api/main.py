@@ -112,22 +112,10 @@ async def debug():
     global bot_task, pipeline_task, health_task, error_task
     from services.health import is_llm_degraded, is_tg_degraded
     from services.llm_router import get_all_providers, get_provider_health
-
-    def _exc(t):
-        if t is not None and t.done() and not t.cancelled():
-            try:
-                return str(t.exception())[:500]
-            except:
-                pass
-        return None
-
     return {
         "bot_running": bot_task is not None and not bot_task.done(),
-        "bot_exception": _exc(bot_task),
         "pipeline_running": pipeline_task is not None and not pipeline_task.done(),
-        "pipeline_exception": _exc(pipeline_task),
         "health_running": health_task is not None and not health_task.done(),
-        "health_exception": _exc(health_task),
         "error_analyzer_running": error_task is not None and not error_task.done(),
         "repair_running": repair_task is not None and not repair_task.done(),
         "llm_degraded": is_llm_degraded(),
