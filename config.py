@@ -8,77 +8,74 @@ _mode = os.getenv("MODE", "commercial")
 if _mode not in ("commercial", "internal"):
     raise EnvironmentError("MODE должен быть 'commercial' или 'internal'")
 
+FREE_LLM_PROVIDERS = [
+    {
+        "name": "huggingface",
+        "type": "hf",
+        "base_url": None,
+        "model": os.getenv("LLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3"),
+        "key_env": "HF_API_KEY",
+    },
+    {
+        "name": "groq",
+        "type": "openai_compat",
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": os.getenv("GROQ_MODEL", "meta-llama/llama-3.1-8b-instant"),
+        "key_env": "GROQ_API_KEY",
+    },
+    {
+        "name": "openrouter",
+        "type": "openai_compat",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"),
+        "key_env": "OPENROUTER_API_KEY",
+    },
+    {
+        "name": "gemini",
+        "type": "gemini",
+        "base_url": None,
+        "model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+        "key_env": "GEMINI_API_KEY",
+    },
+    {
+        "name": "deepseek",
+        "type": "openai_compat",
+        "base_url": "https://api.deepseek.com",
+        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "key_env": "DEEPSEEK_API_KEY",
+    },
+    {
+        "name": "cerebras",
+        "type": "openai_compat",
+        "base_url": "https://api.cerebras.ai/v1",
+        "model": os.getenv("CEREBRAS_MODEL", "cerebras/Llama-3.3-70B"),
+        "key_env": "CEREBRAS_API_KEY",
+    },
+    {
+        "name": "cohere",
+        "type": "cohere",
+        "base_url": None,
+        "model": os.getenv("COHERE_MODEL", "command-r"),
+        "key_env": "COHERE_API_KEY",
+    },
+]
+
 
 def _build_providers():
     providers = []
-
-    hf_key = os.getenv("HF_API_KEY", "")
-    if hf_key:
-        providers.append({
-            "name": "huggingface",
-            "type": "hf",
-            "key": hf_key,
-            "model": os.getenv("LLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3"),
-        })
-
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    if groq_key:
-        providers.append({
-            "name": "groq",
-            "type": "openai_compat",
-            "key": groq_key,
-            "model": os.getenv("GROQ_MODEL", "meta-llama/llama-3.1-8b-instant"),
-            "base_url": "https://api.groq.com/openai/v1",
-        })
-
-    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
-    if openrouter_key:
-        providers.append({
-            "name": "openrouter",
-            "type": "openai_compat",
-            "key": openrouter_key,
-            "model": os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"),
-            "base_url": "https://openrouter.ai/api/v1",
-        })
-
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    if gemini_key:
-        providers.append({
-            "name": "gemini",
-            "type": "gemini",
-            "key": gemini_key,
-            "model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-        })
-
-    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
-    if deepseek_key:
-        providers.append({
-            "name": "deepseek",
-            "type": "openai_compat",
-            "key": deepseek_key,
-            "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-            "base_url": "https://api.deepseek.com",
-        })
-
-    cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
-    if cerebras_key:
-        providers.append({
-            "name": "cerebras",
-            "type": "openai_compat",
-            "key": cerebras_key,
-            "model": os.getenv("CEREBRAS_MODEL", "cerebras/Llama-3.3-70B"),
-            "base_url": "https://api.cerebras.ai/v1",
-        })
-
-    cohere_key = os.getenv("COHERE_API_KEY", "")
-    if cohere_key:
-        providers.append({
-            "name": "cohere",
-            "type": "cohere",
-            "key": cohere_key,
-            "model": os.getenv("COHERE_MODEL", "command-r"),
-        })
-
+    for cfg in FREE_LLM_PROVIDERS:
+        key = os.getenv(cfg["key_env"], "")
+        if not key:
+            continue
+        entry = {
+            "name": cfg["name"],
+            "type": cfg["type"],
+            "key": key,
+            "model": cfg["model"],
+        }
+        if cfg["base_url"]:
+            entry["base_url"] = cfg["base_url"]
+        providers.append(entry)
     return providers
 
 
@@ -107,6 +104,10 @@ class Settings:
     LLM_TARGET_LANG: str = os.getenv("LLM_TARGET_LANG", "ru")
     LLM_LANG_CHECK_LENGTH: int = int(os.getenv("LLM_LANG_CHECK_LENGTH", "500"))
 
+    MAX_RETRIES_PER_PROVIDER: int = int(os.getenv("MAX_RETRIES_PER_PROVIDER", "2"))
+    SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.45"))
+    TARGET_LANGUAGE: str = os.getenv("TARGET_LANGUAGE", "ru")
+
     PROVIDERS: list[dict] = _build_providers()
 
     INTERNAL_API_TOKEN: str = ""
@@ -119,11 +120,13 @@ class Settings:
             raise EnvironmentError("INTERNAL_API_TOKEN обязателен в MODE=internal")
 
     if not DATABASE_URL:
-        raise EnvironmentError("Переменная окружения DATABASE_URL не установлена")
+        raise EnvironmentError("DATABASE_URL не установлена")
+    if not REDIS_URL:
+        raise EnvironmentError("REDIS_URL не установлена")
     if not TG_BOT_TOKEN:
-        raise EnvironmentError("Переменная окружения TG_BOT_TOKEN не установлена")
+        raise EnvironmentError("TG_BOT_TOKEN не установлен")
     if not ONBOARDING_BOT_TOKEN:
-        raise EnvironmentError("Переменная окружения ONBOARDING_BOT_TOKEN не установлена")
+        raise EnvironmentError("ONBOARDING_BOT_TOKEN не установлен")
 
     if "asyncpg" not in DATABASE_URL:
         if DATABASE_URL.startswith("postgres://"):

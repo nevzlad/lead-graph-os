@@ -13,3 +13,4 @@ aiogram==3.5.0
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
 psycopg2-binary==2.9.9
+langdetect==1.0.9

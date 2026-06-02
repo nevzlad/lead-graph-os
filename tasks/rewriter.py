@@ -3,13 +3,96 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from celery_app import celery_app
 from config import settings
 from models import Post, Source, TenantConfig
-from services.llm_router import route as llm_route
-from services.validators import validate_all
-from utils.db import async_session_factory
+from services.antiplag import add_attribution
+from services.llm_router import LLMRouter
+from services.telegram import strip_html
+from services.validators import ContentValidator, validate_all
+from utils.db import async_session_factory, sync_session_factory
 
 logger = logging.getLogger(__name__)
+
+
+@celery_app.task(bind=True, name="tasks.rewriter.process_post", queue="rewriter", max_retries=1)
+def process_post(self, post_id: int, tenant_id: str):
+    session = sync_session_factory()
+    try:
+        post = session.execute(
+            select(Post).where(
+                Post.id == post_id,
+                Post.tenant_id == tenant_id,
+                Post.status == "raw",
+            )
+        ).scalar_one_or_none()
+        if not post:
+            logger.info("Tenant %s post %d: not found or not raw, skip", tenant_id, post_id)
+            return "skipped"
+
+        source = session.get(Source, post.source_id) if post.source_id else None
+
+        tc = session.execute(
+            select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+        if tc:
+            target_lang = tc.language or settings.TARGET_LANGUAGE
+        else:
+            target_lang = settings.TARGET_LANGUAGE
+
+        raw_content = (post.content or "").strip()
+        if not raw_content:
+            logger.info("Tenant %s post %d: empty content, skip", tenant_id, post_id)
+            return "skipped"
+
+        router = LLMRouter()
+        validator = ContentValidator()
+
+        result = router.rewrite_with_failover(tenant_id, raw_content, target_lang)
+        rewritten = result.get("content", raw_content)
+        provider = result.get("provider")
+
+        validation = validator.validate(raw_content, rewritten, target_lang)
+        is_valid = validation["is_valid"]
+
+        if not is_valid:
+            logger.info("Tenant %s post %d: validation failed %s, retry router",
+                        tenant_id, post_id, validation["errors"])
+            result2 = router.rewrite_with_failover(tenant_id, raw_content, target_lang)
+            rewritten2 = result2.get("content", raw_content)
+            provider2 = result2.get("provider")
+
+            validation2 = validator.validate(raw_content, rewritten2, target_lang)
+            if validation2["is_valid"]:
+                rewritten = rewritten2
+                provider = provider2
+                is_valid = True
+            else:
+                logger.warning("Tenant %s post %d: retry also failed validation %s, fallback",
+                               tenant_id, post_id, validation2["errors"])
+                rewritten = strip_html(raw_content)
+
+        rewritten = add_attribution(rewritten, post.link)
+
+        post.content = rewritten
+        if is_valid:
+            post.status = "rewritten"
+        else:
+            post.status = "rewritten_fallback"
+        post.updated_at = datetime.now(timezone.utc)
+        session.commit()
+
+        logger.info("Tenant %s post %d: provider=%s is_valid=%s status=%s length=%d",
+                    tenant_id, post_id, provider, is_valid, post.status, len(rewritten))
+        return post.status
+
+    except Exception as exc:
+        session.rollback()
+        logger.error("Tenant %s post %d: error %s", tenant_id, post_id, str(exc)[:300], exc_info=True)
+        raise self.retry(exc=exc, countdown=30)
+
+    finally:
+        session.close()
 
 
 async def rewrite_post(post_id: int, tenant_id: str) -> str:
@@ -37,91 +120,54 @@ async def rewrite_post(post_id: int, tenant_id: str) -> str:
         if tc:
             if tc.niche:
                 niche = tc.niche
-            target_lang = tc.language or "ru"
+            target_lang = tc.language or settings.TARGET_LANGUAGE
         else:
-            target_lang = "ru"
+            target_lang = settings.TARGET_LANGUAGE
 
-    original_content = post.content or ""
-    if not original_content.strip():
+    raw_content = (post.content or "").strip()
+    if not raw_content:
         return "skipped"
 
-    # --- Attempt 1: Router → Validator ---
-    result1 = llm_route(tenant_id, niche, original_content, target_lang=target_lang)
-    content = result1.get("content", original_content)
-    provider = result1.get("provider")
-    status = result1.get("status", "fallback")
+    router = LLMRouter()
+    validator = ContentValidator()
 
-    v_result = validate_all(content, original=original_content, target_lang=target_lang)
+    result = router.rewrite_with_failover(tenant_id, raw_content, target_lang)
+    rewritten = result.get("content", raw_content)
+    provider = result.get("provider")
 
-    if v_result["is_valid"]:
-        is_valid = True
-    else:
-        # --- Attempt 2: Retry with validation error in prompt ---
-        logger.info("Post %d: validation failed %s, retrying with error hint",
-                    post_id, v_result["issues"])
-        error_type = _first_error_type(v_result["issues"])
-        from services.prompts_engine import build_prompt
-        retry_prompt = build_prompt(
-            niche, original_content,
-            target_lang=target_lang,
-            validation_error=error_type,
-            min_len=settings.LLM_MIN_CONTENT_LENGTH,
-        )
-        result2 = llm_route(tenant_id, niche, retry_prompt, target_lang=target_lang)
-        content2 = result2.get("content", original_content)
+    validation = validator.validate(raw_content, rewritten, target_lang)
+    is_valid = validation["is_valid"]
+
+    if not is_valid:
+        logger.info("Post %d: validation failed %s, retry router", post_id, validation["errors"])
+        result2 = router.rewrite_with_failover(tenant_id, raw_content, target_lang)
+        rewritten2 = result2.get("content", raw_content)
         provider2 = result2.get("provider")
 
-        v_result2 = validate_all(content2, original=original_content, target_lang=target_lang)
-        if v_result2["is_valid"]:
-            content = content2
+        validation2 = validator.validate(raw_content, rewritten2, target_lang)
+        if validation2["is_valid"]:
+            rewritten = rewritten2
             provider = provider2
-            status = result2.get("status", "fallback")
             is_valid = True
         else:
-            logger.warning("Post %d: retry also failed validation %s, using fallback",
-                           post_id, v_result2["issues"])
-            is_valid = False
-            content = _make_fallback_content(original_content)
-            status = "fallback"
+            logger.warning("Post %d: retry also failed validation %s, fallback",
+                           post_id, validation2["errors"])
+            rewritten = strip_html(raw_content)
 
-    # --- Status update ---
-    from services.antiplag import add_attribution
-    content = add_attribution(content, post.link)
+    rewritten = add_attribution(rewritten, post.link)
 
     async with async_session_factory() as session:
-        reresult = await session.execute(
-            select(Post).where(Post.id == post_id, Post.tenant_id == tenant_id)
-        )
-        post = reresult.scalar_one_or_none()
+        post = await session.get(Post, post_id)
         if not post:
             return "skipped"
-        post.content = content
-        if is_valid and status == "success":
+        post.content = rewritten
+        if is_valid:
             post.status = "rewritten"
-        elif is_valid and status != "success":
-            post.status = "rewritten_fallback"
         else:
             post.status = "rewritten_fallback"
         post.updated_at = datetime.now(timezone.utc)
         await session.commit()
 
-    logger.info("Tenant %s post %d: provider=%s is_valid=%s status=%s",
-                tenant_id, post_id, provider, is_valid, post.status)
+    logger.info("Tenant %s post %d: provider=%s is_valid=%s status=%s length=%d",
+                tenant_id, post_id, provider, is_valid, post.status, len(rewritten))
     return post.status
-
-
-def _first_error_type(issues: list[str]) -> str:
-    for iss in issues:
-        if iss.startswith("too_short"):
-            return "too_short"
-        if iss.startswith("wrong_language"):
-            return "wrong_language"
-        if iss.startswith("too_similar"):
-            return "too_similar"
-    return "too_short"
-
-
-def _make_fallback_content(original: str) -> str:
-    if len(original) > 300:
-        return original[:300] + "...\n\n[FREE_LIMIT_REACHED]"
-    return original + "\n\n[FREE_LIMIT_REACHED]"
