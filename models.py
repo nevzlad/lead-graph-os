@@ -54,12 +54,13 @@ class Post(Base, TenantMixin):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     link: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    image: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="raw", nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     external_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     __table_args__ = (
         CheckConstraint(
-            "status IN ('draft', 'raw', 'rewritten', 'rewritten_fallback', 'published', 'failed')",
+            "status IN ('draft', 'raw', 'rewritten', 'rewritten_fallback', 'published', 'failed', 'scheduled')",
             name="ck_post_status",
         ),
         Index("ix_posts_tenant_status", "tenant_id", "status"),

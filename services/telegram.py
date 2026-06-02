@@ -41,5 +41,29 @@ async def _send_message_async(
         await bot.session.close()
 
 
+async def _send_photo_async(
+    chat_id: str, photo: str, caption: str, parse_mode: str = "HTML"
+) -> Optional[str]:
+    bot = Bot(token=settings.TG_BOT_TOKEN)
+    try:
+        msg = await asyncio.wait_for(
+            bot.send_photo(chat_id=chat_id, photo=photo, caption=caption, parse_mode=parse_mode),
+            timeout=TG_API_TIMEOUT,
+        )
+        return str(msg.message_id)
+    except TelegramRetryAfter as e:
+        logger.warning(f"TG rate limit: retry after {e.retry_after}s")
+        await asyncio.sleep(e.retry_after + 5)
+        return await _send_photo_async(chat_id, photo, caption, parse_mode)
+    except (TelegramForbiddenError, TelegramAPIError) as e:
+        logger.error(f"TG API fatal error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected TG error: {e}")
+        raise
+    finally:
+        await bot.session.close()
+
+
 def send_message(chat_id: str, text: str) -> Optional[str]:
     return asyncio.run(_send_message_async(chat_id, text))

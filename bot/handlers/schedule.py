@@ -138,7 +138,7 @@ async def cmd_queue(message: Message):
             rows = await session.execute(
                 select(Post).where(
                     Post.tenant_id == t.tenant_id,
-                    Post.status.in_(["rewritten", "rewritten_fallback"]),
+                    Post.status.in_(["rewritten", "rewritten_fallback", "scheduled", "draft"]),
                 ).order_by(Post.created_at.desc()).limit(10)
             )
             posts = rows.scalars().all()
@@ -162,26 +162,61 @@ async def cmd_queue(message: Message):
 
 @router.callback_query(F.data.startswith("queue:post:"))
 async def queue_show_post(callback: CallbackQuery):
-    await callback.answer()
-    post_id = int(callback.data.split(":", 2)[2])
-    async with async_session_factory() as session:
-        post = await session.get(Post, post_id)
-        if not post:
-            await callback.message.answer("Пост не найден.")
-            return
+    try:
+        post_id = int(callback.data.split(":", 2)[2])
+        async with async_session_factory() as session:
+            post = await session.get(Post, post_id)
+            if not post:
+                await callback.answer("Пост не найден")
+                return
 
-    status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "published": "📤", "raw": "📝"}.get(post.status, "❓")
-    text = (
-        f"{status_icon} *{post.title or 'Без названия'}*\n"
-        f"📊 Статус: {post.status}\n"
-        f"📅 Создан: {post.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"\n{post.content[:500] if post.content else '—'}"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Опубликовать сейчас", callback_data=f"queue:publish:{post.id}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="queue:back")],
-    ])
-    await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
+        status_icon = {"rewritten": "✅", "rewritten_fallback": "⚠️", "published": "📤", "raw": "📝", "scheduled": "⏰", "draft": "📄"}.get(post.status, "❓")
+        text = (
+            f"{status_icon} *{post.title or 'Без названия'}*\n"
+            f"📊 Статус: {post.status}\n"
+            f"📅 Создан: {post.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"\n{post.content[:500] if post.content else '—'}"
+        )
+        kb_rows = [
+            [InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"queue:preview:{post.id}")],
+            [InlineKeyboardButton(text="📤 Опубликовать сейчас", callback_data=f"queue:publish:{post.id}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="queue:back")],
+        ]
+        await callback.answer()
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    except Exception as e:
+        logger.error("queue:post error: %s", e, exc_info=True)
+        await callback.answer(f"❌ {e}", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("queue:preview:"))
+async def queue_preview_post(callback: CallbackQuery):
+    try:
+        post_id = int(callback.data.split(":", 2)[2])
+        async with async_session_factory() as session:
+            post = await session.get(Post, post_id)
+            if not post:
+                await callback.answer("Пост не найден")
+                return
+
+        from services.formatter import format_post
+        formatted = format_post(post.title, post.content, post.link)
+
+        await callback.answer()
+        if post.image:
+            await callback.message.answer_photo(
+                photo=post.image,
+                caption=formatted,
+                parse_mode="HTML",
+            )
+        else:
+            await callback.message.answer(
+                formatted,
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        logger.error("queue:preview error: %s", e, exc_info=True)
+        await callback.answer(f"❌ {e}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("queue:publish:"))

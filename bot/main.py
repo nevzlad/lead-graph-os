@@ -4,8 +4,9 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
+from aiogram.types.error_event import ErrorEvent
 
-from bot.handlers import billing, find, schedule, setup, source, template
+from bot.handlers import billing, find, post, schedule, setup, source, template
 from bot.middleware.telemetry import TelemetryMiddleware
 from config import settings
 
@@ -32,6 +33,8 @@ async def main() -> None:
     logger.info("billing.router included")
     dp.include_router(find.router)
     logger.info("find.router included")
+    dp.include_router(post.router)
+    logger.info("post.router included")
     dp.include_router(schedule.router)
     logger.info("schedule.router included")
 
@@ -54,6 +57,7 @@ async def main() -> None:
             BotCommand(command="schedule", description="Расписание публикаций"),
             BotCommand(command="queue", description="Очередь постов"),
             BotCommand(command="find", description="Найти RSS-источники"),
+            BotCommand(command="post", description="Создать пост вручную"),
             BotCommand(command="stats", description="Статистика и аналитика"),
             BotCommand(command="billing", description="Тарифы"),
             BotCommand(command="telemetry", description="Телеметрия + бонус"),
@@ -66,8 +70,14 @@ async def main() -> None:
         await bot.session.close()
 
     @dp.errors()
-    async def on_error(event: Exception, data: dict) -> None:
-        logger.error("Bot error: %s", event, exc_info=True)
+    async def on_error(event: ErrorEvent) -> None:
+        logger.error("Bot error: %s", event.exception, exc_info=event.exception)
+        cq = event.update.callback_query
+        if cq:
+            try:
+                await cq.answer("❌ Ошибка обработки", show_alert=True)
+            except Exception:
+                pass
 
     await dp.start_polling(bot)
 

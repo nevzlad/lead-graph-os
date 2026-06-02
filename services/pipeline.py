@@ -9,7 +9,7 @@ from collectors.rss import RSSCollector
 from config import settings
 from models import Post, Schedule, Source, TenantConfig
 from services.llm import LLMClient
-from services.telegram import _send_message_async, strip_html
+from services.telegram import _send_message_async, _send_photo_async, strip_html
 from utils.db import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,7 @@ async def publish_post(post_id: int, tenant_id: str, chat_id: str) -> str:
             select(Post).where(
                 Post.id == post_id,
                 Post.tenant_id == tenant_id,
-                Post.status.in_(["rewritten", "rewritten_fallback"]),
+                Post.status.in_(["rewritten", "rewritten_fallback", "scheduled"]),
             )
         )
         post = result.scalar_one_or_none()
@@ -137,8 +137,12 @@ async def publish_post(post_id: int, tenant_id: str, chat_id: str) -> str:
         channel = (source.config or {}).get("tg_channel_id", chat_id)
 
     text = strip_html((post.content or "")[:4096])
+    image = getattr(post, "image", None)
     try:
-        external_id = await _send_message_async(channel, text)
+        if image:
+            external_id = await _send_photo_async(channel, image, text)
+        else:
+            external_id = await _send_message_async(channel, text)
     except Exception as e:
         logger.error(f"Publish failed for post {post_id}: {e}")
         async with async_session_factory() as session:
@@ -256,6 +260,21 @@ async def run_tenant_pipeline(tenant_id: str, chat_id: str) -> dict:
             status = await rewrite_post(post.id, tenant_id)
             if status in ("rewritten", "rewritten_fallback"):
                 counts["rewritten"] += 1
+
+    # Publish due scheduled posts (from manual /post)
+    async with async_session_factory() as session:
+        now = datetime.now(timezone.utc)
+        due = await session.execute(
+            select(Post).where(
+                Post.tenant_id == tenant_id,
+                Post.status == "scheduled",
+                Post.scheduled_at <= now,
+            ).order_by(Post.scheduled_at).limit(5)
+        )
+        for post in due.scalars().all():
+            status = await publish_post(post.id, tenant_id, chat_id)
+            if status == "published":
+                counts["published"] += 1
 
     async with async_session_factory() as session:
         tc = await session.scalar(
