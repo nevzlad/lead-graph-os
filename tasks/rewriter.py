@@ -111,7 +111,10 @@ async def rewrite_post(post_id: int, tenant_id: str, force: bool = False) -> str
             select(Source).where(Source.id == post.source_id, Source.tenant_id == tenant_id)
         )
         source = src_result.scalar_one_or_none()
-        niche = (source.config or {}).get("niche", "news") if source else "news"
+        if source:
+            niche = (source.config or {}).get("niche", "news")
+        else:
+            niche = "news"
 
         tc = await session.scalar(
             select(TenantConfig).where(TenantConfig.tenant_id == tenant_id)
