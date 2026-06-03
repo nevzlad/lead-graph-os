@@ -112,7 +112,7 @@ async def on_shutdown():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "mode": settings.MODE}
 
 
 @app.get("/debug")
