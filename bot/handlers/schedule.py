@@ -17,6 +17,14 @@ from utils.db import async_session_factory
 router = Router()
 logger = logging.getLogger(__name__)
 
+# In-memory selection sets per user for batch delete
+_selected: dict[str, set[int]] = {}
+
+
+def _user_selected(user_id: str) -> set[int]:
+    return _selected.setdefault(user_id, set())
+
+
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 WEEKDAY_FULL = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 NICHE_NAMES = {"news": "📰 Новости", "blog": "📝 Блог", "shop": "🛒 Магазин"}
@@ -156,6 +164,9 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
     limit = 10
     target_lang = tenant.language or "ru"
     offset = page * limit
+    user_id = str(msg_or_cb.from_user.id) if isinstance(msg_or_cb, (CallbackQuery, Message)) else ""
+    selected_ids = _user_selected(user_id) if user_id else set()
+
     async with async_session_factory() as session:
         total = await session.scalar(
             select(func.count(Post.id)).where(
@@ -213,7 +224,8 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
         extra = ""
         if p.status == "scheduled" and p.scheduled_at:
             extra = f" ⤵ {p.scheduled_at.strftime('%d.%m %H:%M')}"
-        lines.append(f"  {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}{extra}")
+        sel = "✅" if p.id in selected_ids else "  "
+        lines.append(f"{sel} {tag} [{p.created_at.strftime('%d.%m %H:%M')}] {title}{extra}")
 
     kb = []
     for p in valid_posts:
@@ -226,17 +238,36 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
         badge = ""
         if p.status == "scheduled" and p.scheduled_at:
             badge = f" ⤵{p.scheduled_at.strftime('%H:%M')}"
+        check = "✅" if p.id in selected_ids else "⬜"
         kb.append(
             [
-                InlineKeyboardButton(text=f"{tag} {title}{badge}", callback_data=f"queue:post:{p.id}"),
+                InlineKeyboardButton(text=f"{check} {tag} {title}{badge}", callback_data=f"queue:select:{p.id}"),
                 InlineKeyboardButton(text="🗑", callback_data=f"queue:del:{p.id}"),
             ]
         )
 
     action_row = [
-        InlineKeyboardButton(text="🌐 Перевести все", callback_data=f"queue:retranslate_all:{tenant.tenant_id}")
+        InlineKeyboardButton(text="🌐 Перевести все", callback_data=f"queue:retranslate_all:{tenant.tenant_id}"),
     ]
+    if hidden_count:
+        action_row.append(
+            InlineKeyboardButton(text="🗑 Удалить невалидные", callback_data=f"queue:del_invalid:{tenant.tenant_id}")
+        )
     kb.append(action_row)
+
+    if selected_ids:
+        kb.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🗑 Удалить выбранные ({len(selected_ids)})",
+                    callback_data=f"queue:delselect:{tenant.tenant_id}",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Снять выделение",
+                    callback_data="queue:clear_select",
+                ),
+            ]
+        )
 
     nav = []
     if page > 0:
@@ -489,6 +520,86 @@ async def queue_delete_post(callback: CallbackQuery):
             await session.delete(post)
             await session.commit()
     await callback.answer("🗑 Пост удалён")
+    user_id = str(callback.from_user.id)
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
+
+
+@router.callback_query(F.data.startswith("queue:select:"))
+async def queue_toggle_select(callback: CallbackQuery):
+    post_id = int(callback.data.split(":", 2)[2])
+    user_id = str(callback.from_user.id)
+    sel = _user_selected(user_id)
+    if post_id in sel:
+        sel.discard(post_id)
+    else:
+        sel.add(post_id)
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
+
+
+@router.callback_query(F.data == "queue:clear_select")
+async def queue_clear_select(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    _selected.pop(user_id, None)
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
+
+
+@router.callback_query(F.data.startswith("queue:delselect:"))
+async def queue_delete_selected(callback: CallbackQuery):
+    tenant_id = callback.data.split(":", 2)[2]
+    user_id = str(callback.from_user.id)
+    sel = _user_selected(user_id)
+    if not sel:
+        await callback.answer("Нет выбранных постов")
+        return
+    async with async_session_factory() as session:
+        for pid in list(sel):
+            post = await session.get(Post, pid)
+            if post and post.tenant_id == tenant_id:
+                await session.delete(post)
+        await session.commit()
+    deleted = len(sel)
+    sel.clear()
+    await callback.answer(f"🗑 Удалено {deleted} постов")
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
+
+
+@router.callback_query(F.data.startswith("queue:del_invalid:"))
+async def queue_delete_invalid(callback: CallbackQuery):
+    tenant_id = callback.data.split(":", 2)[2]
+    await callback.answer("🔍 Проверяю...")
+    async with async_session_factory() as session:
+        tc = await session.scalar(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
+        target_lang = tc.language or "ru" if tc else "ru"
+        rows = await session.execute(
+            select(Post).where(
+                Post.tenant_id == tenant_id,
+                Post.status.in_(["rewritten", "rewritten_fallback", "scheduled", "draft", "raw"]),
+            )
+        )
+        all_posts = rows.scalars().all()
+    deleted = 0
+    invalid_ids = []
+    for p in all_posts:
+        valid, _ = check_post_for_queue(p.content, target_lang, p.status)
+        if not valid:
+            invalid_ids.append(p.id)
+    if invalid_ids:
+        async with async_session_factory() as session:
+            for pid in invalid_ids:
+                post = await session.get(Post, pid)
+                if post:
+                    await session.delete(post)
+            await session.commit()
+        deleted = len(invalid_ids)
+    await callback.answer(f"🗑 Удалено {deleted} невалидных постов" if deleted else "Невалидных постов нет")
     user_id = str(callback.from_user.id)
     tenants = await _get_user_tenants(user_id)
     if tenants:
