@@ -6,6 +6,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 
 from models import Post, Schedule, TenantConfig
@@ -254,6 +255,8 @@ async def _show_queue_page(msg_or_cb, tenant: TenantConfig, page: int = 0):
             InlineKeyboardButton(text="🗑 Удалить невалидные", callback_data=f"queue:del_invalid:{tenant.tenant_id}")
         )
     kb.append(action_row)
+
+    kb.append([InlineKeyboardButton(text="🗑 Очистить очередь", callback_data=f"queue:clear_all:{tenant.tenant_id}")])
 
     if selected_ids:
         kb.append(
@@ -601,6 +604,45 @@ async def queue_delete_invalid(callback: CallbackQuery):
         deleted = len(invalid_ids)
     await callback.answer(f"🗑 Удалено {deleted} невалидных постов" if deleted else "Невалидных постов нет")
     user_id = str(callback.from_user.id)
+    tenants = await _get_user_tenants(user_id)
+    if tenants:
+        await _show_queue_page(callback, tenants[0], 0)
+
+
+@router.callback_query(F.data.startswith("queue:clear_all:"))
+async def queue_confirm_clear(callback: CallbackQuery):
+    tenant_id = callback.data.split(":", 2)[2]
+    await callback.answer()
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🗑 Да, очистить всё", callback_data=f"queue:clear_done:{tenant_id}"),
+                InlineKeyboardButton(text="❌ Нет", callback_data="queue:list"),
+            ],
+        ]
+    )
+    await callback.message.edit_text("🗑 Удалить ВСЕ посты из очереди? Это нельзя отменить.", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("queue:clear_done:"))
+async def queue_clear_queue(callback: CallbackQuery):
+    tenant_id = callback.data.split(":", 2)[2]
+    await callback.answer("🗑 Очищаю...")
+    async with async_session_factory() as session:
+        rows = await session.execute(
+            select(Post.id).where(
+                Post.tenant_id == tenant_id,
+                Post.status.in_(["rewritten", "rewritten_fallback", "scheduled", "draft", "raw"]),
+            )
+        )
+        ids = [row[0] for row in rows]
+        if ids:
+            await session.execute(sa_delete(Post).where(Post.id.in_(ids)))
+            await session.commit()
+        deleted = len(ids)
+    user_id = str(callback.from_user.id)
+    _selected.pop(user_id, None)
+    await callback.answer(f"🗑 Очищено {deleted} постов" if deleted else "Очередь уже пуста")
     tenants = await _get_user_tenants(user_id)
     if tenants:
         await _show_queue_page(callback, tenants[0], 0)
