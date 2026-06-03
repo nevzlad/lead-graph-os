@@ -9,12 +9,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402
 
-from models import Post, TenantConfig
-from services.repair import retry_publish
-from tasks.rewriter import rewrite_post
-from utils.db import async_session_factory
+from models import Post, TenantConfig  # noqa: E402
+from services.repair import retry_publish  # noqa: E402
+from tasks.rewriter import rewrite_post  # noqa: E402
+from utils.db import async_session_factory  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("process_queue")
