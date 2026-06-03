@@ -201,10 +201,12 @@ def check_post_for_queue(content: str | None, target_lang: str, status: str = "r
     if not content or not content.strip():
         return False, "empty"
     stripped = content.strip()
-    if len(stripped) < settings.LLM_MIN_CONTENT_LENGTH:
-        return False, f"too_short:{len(stripped)}"
     if len(stripped) > 4000:
         return False, f"too_long:{len(stripped)}"
+    if status in ("raw", "draft"):
+        return True, None
+    if len(stripped) < settings.LLM_MIN_CONTENT_LENGTH:
+        return False, f"too_short:{len(stripped)}"
     if status in ("rewritten", "rewritten_fallback", "scheduled"):
         ok, err = _validator._check_language(stripped, target_lang)
         if not ok:
